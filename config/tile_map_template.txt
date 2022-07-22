@@ -1,0 +1,12 @@
+#This is a second configuration file to map tiles in a multi-tile
+#situation. This allows one to convert from local strip coordinates
+#to global strip coordinates, based on a tile ID number found in the
+#channel_map file. It also is a quick way to look up the location and
+#ID of tiles.
+#"Tile": ID of the tile, that matches the channel map
+#"X/Y": the global position of the center of the tile, within an assembly. (currently, mm)
+# -Evan
+
+Tile,X,Y
+0,0,0
+1,102,0

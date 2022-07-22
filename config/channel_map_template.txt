@@ -1,0 +1,79 @@
+#This is a channel map file for the CRYO ASIC channels, where the CRYO 
+#ASIC is on the flex control board which has 32 channels connected to
+#the tile and another 32 channels connected to dummy 40pF capacitors. 
+#The dummy capacitor set of channels will be called "tile 1" whereas
+#the real channels are "tile 0". Channel column corresponds to 
+#the channel number that the CRYO ASIC control software spits out
+#in its raw data. The position corresponds to an integer multiple
+#of the strip pitch that that channel corresponds to in the x or y direction. 
+#The tile ID maps onto the ID found in tile_map config file, relating local strip 
+#coordinates to global strip coordinates
+# -Evan
+
+Tile,Channel,Type,LocalPosition
+0,0,Xwire,-8
+0,2,Xwire,-7
+0,8,Xwire,-6
+0,10,Xwire,-5
+0,16,Xwire,-4
+0,18,Xwire,-3
+0,24,Xwire,-2
+0,26,Xwire,-1
+0,1,Xwire,1
+0,3,Xwire,2
+0,9,Xwire,3
+0,11,Xwire,4
+0,17,Xwire,5
+0,19,Xwire,6
+0,25,Xwire,7
+0,27,Xwire,8
+0,33,Ywire,-8
+0,35,Ywire,-7
+0,41,Ywire,-6
+0,43,Ywire,-5
+0,49,Ywire,-4
+0,51,Ywire,-3
+0,57,Ywire,-2
+0,59,Ywire,-1
+0,32,Ywire,1
+0,34,Ywire,2
+0,40,Ywire,3
+0,42,Ywire,4
+0,48,Ywire,5
+0,50,Ywire,6
+0,56,Ywire,7
+0,58,Ywire,8
+1,4,Xwire,-8
+1,5,Xwire,-7
+1,6,Xwire,-6
+1,7,Xwire,-5
+1,12,Xwire,-4
+1,13,Xwire,-3
+1,14,Xwire,-2
+1,15,Xwire,-1
+1,20,Xwire,1
+1,21,Xwire,2
+1,22,Xwire,3
+1,23,Xwire,4
+1,28,Xwire,5
+1,29,Xwire,6
+1,30,Xwire,7
+1,31,Xwire,8
+1,36,Ywire,-8
+1,37,Ywire,-7
+1,38,Ywire,-6
+1,39,Ywire,-5
+1,44,Ywire,-4
+1,45,Ywire,-3
+1,46,Ywire,-2
+1,47,Ywire,-1
+1,52,Ywire,1
+1,53,Ywire,2
+1,54,Ywire,3
+1,55,Ywire,4
+1,60,Ywire,5
+1,61,Ywire,6
+1,62,Ywire,7
+1,63,Ywire,8
+
+
