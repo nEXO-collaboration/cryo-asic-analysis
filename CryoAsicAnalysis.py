@@ -168,6 +168,16 @@ class CryoAsicAnalysis:
 			return ev["Data"][ch]
 		else:
 			return None
+		
+	def get_scope(self, evno):
+		if(evno < 0):
+			evno = 0
+		if(evno > self.nevents_total):
+			print("That event is not in the dataframe: " + str(evno))
+			return
+
+		ev = self.df.iloc[evno]
+		return ev["Scope"]
 
 	#for every channel, calculate a PSD using an event-by-event
 	#calculation, averaging over all events. Save these periodogram
