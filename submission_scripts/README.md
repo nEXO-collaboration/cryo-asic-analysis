@@ -1,0 +1,2 @@
+## Submission scripts
+This folder is intended for python and bash scripts that are used to process data, possibly on high performance computing cluster (HPC) or just on local machines. It can also be a place for test processing scripts. 
