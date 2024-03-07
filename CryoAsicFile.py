@@ -55,7 +55,7 @@ class CryoAsicFile:
 	#i've taken this from Dionisio, on binary
 	#format saved by the rogue software controlling the asic. 
 	#nevents limits the number of events loaded. 
-	def load_raw_data(self, nevents=None):
+	def load_raw_data(self, nevents=None, nskip=0, AsicID = 0):
 		#this block reads in raw binary file into
 		#some interesting format?
 		f = open(self.filename, mode = 'rb')
@@ -70,16 +70,19 @@ class CryoAsicFile:
 				newPayload = np.fromfile(f, dtype='uint32', count=payloadSize) #(frame size splited by four to read 32 bit 
 				#save only serial data frames
 				if ((file_header[1]&0xff000000)>>24)==1: #image packet only, 2 mean scope data
-					if (numberOfFrames == 0):
+					if (numberOfFrames == 0): 
 						allFrames = [newPayload.copy()]
 					else:
 						newFrame  = [newPayload.copy()]
-						allFrames = np.append(allFrames, newFrame, axis = 0)
+						if numberOfFrames >= nskip:
+							allFrames = np.append(allFrames, newFrame, axis = 0)
 					numberOfFrames = numberOfFrames + 1 
 					previousSize = file_header
 
 				if (numberOfFrames%1000==0):
 					print("Read %d events from CRYO ASIC file" % numberOfFrames)
+				if (numberOfFrames>nevents):
+					break
 
 			except Exception: 
 				e = sys.exc_info()[0]
@@ -111,6 +114,8 @@ class CryoAsicFile:
 
 			for i in looper:
 				currentRawData = allFrames[i, :]
+				if int(( currentRawData[0] & 0x10)>>4) != AsicID:
+					continue
 				if(len(imgDesc) == 0):
 					imgDesc = np.array([self.descramble_cryo_image(bytearray(currentRawData.tobytes()))], dtype=float)
 				else:
