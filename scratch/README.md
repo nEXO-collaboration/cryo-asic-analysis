@@ -1,0 +1,2 @@
+## Scratch space
+This is a space for personal users to develop draft level code, or development notebooks that are not intended to be interpreted as "working" or "useable" by many. You can of course share your scratch work, and this can be a space to preserve it or develop it. You can also feel free not to commit code in this folder, or add it to your gitignore, if you're not wanting to share your draft work. 
