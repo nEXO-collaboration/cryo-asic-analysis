@@ -39,6 +39,7 @@ class CryoAsicFile:
 		self.channel_map_fn = channel_map_fn #filename for channel map 
 		self.tile_map_fn = tile_map_fn #filename for tile position map
 		self.events = [] #events[event_no][channel] = [volts, volts, volts...]
+		self.scopes = [] #scopes[event_no]
 
 		#parse the channel map file right away, flag any errors before trying to load data
 		#structure: pandas dataframe with columns "Tile", "Channel", "Type", "LocalPosition"
@@ -54,7 +55,7 @@ class CryoAsicFile:
 	#i've taken this from Dionisio, on binary
 	#format saved by the rogue software controlling the asic. 
 	#nevents limits the number of events loaded. 
-	def load_raw_data(self, nevents=None):
+	def load_raw_data(self, nevents=None, nskip=0, AsicID = 0):
 		#this block reads in raw binary file into
 		#some interesting format?
 		f = open(self.filename, mode = 'rb')
@@ -69,16 +70,19 @@ class CryoAsicFile:
 				newPayload = np.fromfile(f, dtype='uint32', count=payloadSize) #(frame size splited by four to read 32 bit 
 				#save only serial data frames
 				if ((file_header[1]&0xff000000)>>24)==1: #image packet only, 2 mean scope data
-					if (numberOfFrames == 0):
+					if (numberOfFrames == 0): 
 						allFrames = [newPayload.copy()]
 					else:
 						newFrame  = [newPayload.copy()]
-						allFrames = np.append(allFrames, newFrame, axis = 0)
+						if numberOfFrames >= nskip:
+							allFrames = np.append(allFrames, newFrame, axis = 0)
 					numberOfFrames = numberOfFrames + 1 
 					previousSize = file_header
 
 				if (numberOfFrames%1000==0):
 					print("Read %d events from CRYO ASIC file" % numberOfFrames)
+				if (numberOfFrames>nevents):
+					break
 
 			except Exception: 
 				e = sys.exc_info()[0]
@@ -110,6 +114,8 @@ class CryoAsicFile:
 
 			for i in looper:
 				currentRawData = allFrames[i, :]
+				if int(( currentRawData[0] & 0x10)>>4) != AsicID:
+					continue
 				if(len(imgDesc) == 0):
 					imgDesc = np.array([self.descramble_cryo_image(bytearray(currentRawData.tobytes()))], dtype=float)
 				else:
@@ -120,7 +126,45 @@ class CryoAsicFile:
 		self.events = imgDesc 
 		print("Done loading " + str(len(self.events)) + " CRYO ASIC events")
 
+	def load_scope_data(self, nevents=None):
+		#this block reads in raw binary file into
+		#some interesting format?
+		f = open(self.filename, mode = 'rb')
+		file_header = [0]
+		numberOfFrames = 0
+		previousSize = 0
+		while (len(file_header)>0):
+			try:
+				# reads file header [the number of bytes to read, EVIO]
+				file_header = np.fromfile(f, dtype='uint32', count=2)
+				payloadSize = int(file_header[0]/4)-1 #-1 is need because size info includes the second word from the header
+				newPayload = np.fromfile(f, dtype='uint16', count=payloadSize*2) #(frame size splited by four to read 32 bit 
+				#save only serial data frames
+				if ((file_header[1]&0xff000000)>>24)==2: #image packet only, 2 mean scope data
+					if (numberOfFrames == 0):
+						allFrames = [newPayload.copy()]
+					else:
+						newFrame  = [newPayload.copy()]
+						allFrames = np.append(allFrames, newFrame, axis = 0)
+					numberOfFrames = numberOfFrames + 1 
+					previousSize = file_header
+
+				if (numberOfFrames%1000==0):
+					print("Read %d scope events from CRYO ASIC file" % numberOfFrames)
+
+			except Exception: 
+				e = sys.exc_info()[0]
+				print ("Message\n", e)
+				print ('size', file_header, 'previous size', previousSize)
+				print("numberOfFrames read: " ,numberOfFrames)
 		
+
+
+		print("Finished reading raw binary scope data")
+		self.scopes = allFrames
+		#this block descrambles the format to a structured list of events
+		#like event[number][ch] = [...,...,..., waveform]
+
 
 	#this is distinct from load_raw_data in that it references
 	#the channel map that has been configured in this class, and could
@@ -129,7 +173,7 @@ class CryoAsicFile:
 	def group_into_pandas(self):
 		#clear the present waveform df
 		self.waveform_df = None
-		self.waveform_df = pd.DataFrame(columns=['Channels','Timestamp','Data','ChannelTypes','ChannelPositions'])
+		self.waveform_df = pd.DataFrame(columns=['Channels','Timestamp','Data','ChannelTypes','ChannelPositions', 'Scope'])
 
 		#check that data has been loaded in from binary
 		if(len(self.events) == 0):
@@ -184,6 +228,8 @@ class CryoAsicFile:
 			ev_ser["ChannelPositions"] = channel_positions
 			ev_ser["Data"] = waves 
 			self.waveform_df = self.waveform_df.append(ev_ser, ignore_index=True)
+		if(len(self.scopes)) > 0:
+			self.waveform_df['Scope'] = self.scopes.tolist()
 
 
 
