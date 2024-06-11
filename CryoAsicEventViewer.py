@@ -129,7 +129,7 @@ class CryoAsicEventViewer:
 			ser["ChannelX"] = ev["ChannelPositions"][i][0]
 			ser["ChannelY"] = ev["ChannelPositions"][i][1]
 			ser["ChannelType"] = ev["ChannelTypes"][i]
-			evdf = evdf.append(ser, ignore_index=True)
+			evdf = pd.concat([evdf, ser.to_frame().transpose()], ignore_index=True)
 
 		return evdf
 
@@ -335,7 +335,7 @@ class CryoAsicEventViewer:
 	#overlayed, but with traces shifted relative to eachother by 
 	#some number of ADC counts. if tileno is not none, it only plots
 	#one tile, associated with an integer passed as argument
-	def plot_strips_waveforms_separated(self, evno):
+	def plot_strips_waveforms_separated(self, evno, show=True):
 		if(evno < 0):
 			evno = 0
 		if(evno > self.nevents_total):
@@ -410,15 +410,18 @@ class CryoAsicEventViewer:
 			curshift += mv_shift
 
 		ax[0].set_xlabel('time (us)')
+		ax[0].set_title("X-strips, event {:d}".format(evno))
 		ax[0].set_ylabel("shifted mV")
 		ax[1].set_xlabel('time (us)')
 		ax[1].set_ylabel("shifted mV")
-		ax[0].set_ylim([-10, 200])
-		ax[1].set_ylim([-10, 200])
-		print(dead_chs)
+		ax[1].set_title("Y-strips, event {:d}".format(evno))
+		#ax[0].set_ylim([-10, 200])
+		#ax[1].set_ylim([-10, 200])
 
-
-		plt.show()
+		if(show):
+			plt.show()
+		return fig, ax
+		
 	
 	def plot_event_ch(self, evno, ch, ax = None, show=True):
 		ev = self.create_df_from_event(evno)

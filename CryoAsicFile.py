@@ -219,7 +219,7 @@ class CryoAsicFile:
 
 				#Here, we want to add the global position of the strip. Find the definitions
 				#of this, and how its parsed from the maps, in the following function
-				tile_id = int(self.channel_map[self.channel_map["Channel"] == ch]["Tile"])
+				tile_id = int(self.channel_map[self.channel_map["Channel"] == ch]["Tile"].iloc[0])
 				channel_positions.append(self.get_ch_position(tile_id, ch, typ))
 
 			ev_ser["Timestamp"] = None #trying to figure out where this lives in the raw data at the moment...
@@ -227,7 +227,7 @@ class CryoAsicFile:
 			ev_ser["ChannelTypes"] = channel_types
 			ev_ser["ChannelPositions"] = channel_positions
 			ev_ser["Data"] = waves 
-			self.waveform_df = self.waveform_df.append(ev_ser, ignore_index=True)
+			self.waveform_df = pd.concat([self.waveform_df, ev_ser.to_frame().transpose()], ignore_index=True)
 		if(len(self.scopes)) > 0:
 			self.waveform_df['Scope'] = self.scopes.tolist()
 
@@ -246,9 +246,9 @@ class CryoAsicFile:
 
 	def get_ch_position(self, tile_id, ch, typ):
 		tile_coord_series = self.tile_map[self.tile_map["Tile"] == tile_id]
-		tile_center = np.array([float(tile_coord_series['X']), float(tile_coord_series['Y'])])
+		tile_center = np.array([float(tile_coord_series['X'].iloc[0]), float(tile_coord_series['Y'].iloc[0])])
 
-		strip_local_pos = float(self.channel_map[self.channel_map["Channel"] == ch]["LocalPosition"])
+		strip_local_pos = float(self.channel_map[self.channel_map["Channel"] == ch]["LocalPosition"].iloc[0])
 		#this local position is an integer multiple number of strips from center. For 32 channels, 16
 		#strips per side, this goes -8,-7,-6,-5,-4,-3,-2,-1,1,2,3,... note the lack of 0. The -1 strip
 		#is 0.5*pitch to the left of center (in x direction). Hence, the 0.5 below. 
