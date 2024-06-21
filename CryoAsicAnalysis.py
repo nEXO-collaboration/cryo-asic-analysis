@@ -10,29 +10,6 @@ from scipy import signal
 
 
 
-#for progress bars, it depends whether one is working in
-#a jupyter notebook or on a script. if you are getting missing
-#library errors, please do the following lines to install. 
-#pip install tqdm ipywidgets; 
-#jupyter nbextension enable --py widgetsnbextension;
-from IPython import get_ipython
-def isnotebook():
-	try:
-		shell = get_ipython().__class__.__name__
-		if shell == 'ZMQInteractiveShell':
-			return True   # Jupyter notebook or qtconsole
-		elif shell == 'TerminalInteractiveShell':
-			return False  # Terminal running IPython
-		else:
-			return False  # Other type (?)
-	except NameError:
-		return False      # Probably standard Python interpreter
-if(isnotebook()):
-	from tqdm.notebook import tqdm
-else:
-	from tqdm import tqdm
-
-
 
 class CryoAsicAnalysis:
 	#takes a "config" dict which has analysis and data parameters
@@ -125,8 +102,7 @@ class CryoAsicAnalysis:
 		index_range = [self.time_to_sample(self.config["baseline"][0]), self.time_to_sample(self.config["baseline"][1])]
 
 		#baseline subtract all events
-		looper = tqdm(self.df.iterrows(), total=len(self.df.index))
-		for i, row in looper:
+		for i, row in self.df.iterrows():
 			waves = row["Data"]
 			for ch in range(len(waves)):
 				base = np.mean(waves[ch][index_range[0]:index_range[1]])
@@ -203,9 +179,8 @@ class CryoAsicAnalysis:
 
 		chs = self.df.iloc[0]["Channels"]
 		nevents = len(self.df.index) #looping through all events
-		looper = tqdm(chs, desc="Calculating avg PSD on channel...")
 
-		for ch in looper:
+		for ch in chs:
 			pxx_tot = None
 			freqs = None
 			avg_event_counter = 0 #number of events over which the avg is calculated
@@ -252,9 +227,8 @@ class CryoAsicAnalysis:
 	def calculate_stds(self, window=[0,-1]):
 		chs = self.df.iloc[0]["Channels"]
 		nevents = len(self.df.index) #looping through all events
-		looper = tqdm(chs, desc="Calculating stds on each channel...")
 
-		for ch in looper:
+		for ch in chs:
 			if(ch == self.config["key_channel"]):
 				continue
 			all_samples = []
@@ -330,9 +304,8 @@ class CryoAsicAnalysis:
 		img_full = np.zeros((len(chs), len(chs)))
 		img_lags = np.zeros((len(chs), len(chs)))
 		event_count = 0
-		looper = tqdm(range(nevents), desc="Calculating cross correlation matrix")
 		skip_event = False #flag to skip events if there is a glitch
-		for evno in looper:
+		for evno in range(nevents):
 			img = np.zeros((len(chs), len(chs)))
 			for i in range(len(chs)):
 				#zero out dead channels
