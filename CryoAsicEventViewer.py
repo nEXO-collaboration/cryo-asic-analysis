@@ -152,7 +152,7 @@ class CryoAsicEventViewer:
 
 		#select only strips, X <= 51 is for strips and not capacitors
 		xstrip_mask = (ev["ChannelType"] == 'x') & (ev["ChannelX"] <= 51)
-		ystrip_mask = (ev["ChannelType"] == 'y') & (ev["ChannelX"] <= 51)
+		ystrip_mask = (ev["ChannelType"] == 'y') & (ev["ChannelX"] == 102.0)
 		xdf = ev[xstrip_mask]
 		ydf = ev[ystrip_mask]
 
@@ -349,7 +349,7 @@ class CryoAsicEventViewer:
 
 		#select only strips, X <= 51 is for strips and not capacitors
 		xstrip_mask = (ev["ChannelType"] == 'x') & (ev["ChannelX"] <= 51)
-		ystrip_mask = (ev["ChannelType"] == 'y') & (ev["ChannelX"] <= 51)
+		ystrip_mask = (ev["ChannelType"] == 'y') & (ev["ChannelX"] == 102.0)
 		xdf = ev[xstrip_mask]
 		ydf = ev[ystrip_mask]
 
