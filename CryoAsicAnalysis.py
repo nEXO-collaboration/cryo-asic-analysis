@@ -101,6 +101,22 @@ class CryoAsicAnalysis:
 			return True
 		else:
 			return False
+		
+
+
+	def create_df_from_event(self, evno):
+		evdf = pd.DataFrame()
+		ev = self.df.iloc[evno]
+		for i, ch in enumerate(ev["Channels"]):
+			ser = pd.Series()
+			ser["Channel"] = ch 
+			ser["Data"] = ev["Data"][i]
+			ser["ChannelX"] = ev["ChannelPositions"][i][0]
+			ser["ChannelY"] = ev["ChannelPositions"][i][1]
+			ser["ChannelType"] = ev["ChannelTypes"][i]
+			evdf = pd.concat([evdf, ser.to_frame().transpose()], ignore_index=True)
+
+		return evdf
 
 
 
@@ -108,14 +124,15 @@ class CryoAsicAnalysis:
 	#on these boards. this function will tell if
 	#if it is strip or cap
 	def is_channel_strip(self, ch):
-		chs = self.df["Channels"].iloc[0]
-		chidx = chs.index(ch)
-		p = self.df["ChannelPositions"].iloc[0]
-		thisch_pos = p[chidx]
-		if(thisch_pos[0] >= 51):
-			return False
-		else:
+		ev = self.create_df_from_event(0)
+		xstrip_mask = (ev["ChannelType"] == 'x') & (ev["ChannelX"] <= 51)
+		ystrip_mask = (ev["ChannelType"] == 'y') & (ev["ChannelX"] == 102.0)
+		if(xstrip_mask[ch]) or (ystrip_mask[ch]):
 			return True
+		else:
+			return False
+
+
 
 	#for the moment, we will baseline subtract based
 	#on an input window 
