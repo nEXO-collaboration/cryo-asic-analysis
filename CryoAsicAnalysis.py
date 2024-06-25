@@ -68,6 +68,23 @@ class CryoAsicAnalysis:
 
 		self.corr_mat = None
 
+	@np.vectorize
+	def ADC_to_ENC(ADC, Gain=6, pt=1.2):
+
+		Gain = str(Gain)
+		pt = str(pt)
+
+		V_Max = {}
+		V_Max["1"] = {"0.6": 1.5798, "1.2": 1.5751, "2.4": 1.5785, "3.6": 1.5769} # ASIC Voltage Saturation According to Aldo
+		V_Max["1.5"] = {"0.6": 1.5773, "1.2": 1.5731, "2.4": 1.5783, "3.6": 1.5763}	
+		V_Max["3"] = {"0.6": 1.5706, "1.2": 1.5679, "2.4": 1.5735, "3.6": 1.5741}
+		V_Max["6"] = {"0.6": 1.5604, "1.2": 1.5609, "2.4": 1.5659, "3.6": 1.5703}
+		
+		Q_Max = {"1": 150e-15, "1.5": 100e-15, "3": 50e-15, "6": 25e-15} #Maximum charge range of the ASIC in Coloumbs
+
+		ENC = ADC*(1.2/2**12)*(Q_Max[Gain]/V_Max[Gain][pt])/1.6e-19
+		return ENC
+
 
 
 	#given a time, return the closest sample index (int)
@@ -84,6 +101,22 @@ class CryoAsicAnalysis:
 			return True
 		else:
 			return False
+		
+
+
+	def create_df_from_event(self, evno):
+		evdf = pd.DataFrame()
+		ev = self.df.iloc[evno]
+		for i, ch in enumerate(ev["Channels"]):
+			ser = pd.Series()
+			ser["Channel"] = ch 
+			ser["Data"] = ev["Data"][i]
+			ser["ChannelX"] = ev["ChannelPositions"][i][0]
+			ser["ChannelY"] = ev["ChannelPositions"][i][1]
+			ser["ChannelType"] = ev["ChannelTypes"][i]
+			evdf = pd.concat([evdf, ser.to_frame().transpose()], ignore_index=True)
+
+		return evdf
 
 
 
@@ -91,14 +124,15 @@ class CryoAsicAnalysis:
 	#on these boards. this function will tell if
 	#if it is strip or cap
 	def is_channel_strip(self, ch):
-		chs = self.df["Channels"].iloc[0]
-		chidx = chs.index(ch)
-		p = self.df["ChannelPositions"].iloc[0]
-		thisch_pos = p[chidx]
-		if(thisch_pos[0] >= 51):
-			return False
-		else:
+		ev = self.create_df_from_event(0)
+		xstrip_mask = (ev["ChannelType"] == 'x') & (ev["ChannelX"] <= 51)
+		ystrip_mask = (ev["ChannelType"] == 'y') & (ev["ChannelX"] == 102.0)
+		if(xstrip_mask[ch]) or (ystrip_mask[ch]):
 			return True
+		else:
+			return False
+
+
 
 	#for the moment, we will baseline subtract based
 	#on an input window 
@@ -229,10 +263,10 @@ class CryoAsicAnalysis:
 				s["Freqs"] = freqs
 				s["PSD"] = pxx_tot
 				s["Channel"] = ch 
-				self.noise_df = self.noise_df.append(s, ignore_index=True)
+				self.noise_df = pd.concat([self.noise_df, s.to_frame().transpose()], ignore_index=True)
 
 
-	def calculate_stds(self):
+	def calculate_stds(self, window=[0,-1]):
 		chs = self.df.iloc[0]["Channels"]
 		nevents = len(self.df.index) #looping through all events
 		looper = tqdm(chs, desc="Calculating stds on each channel...")
@@ -243,7 +277,7 @@ class CryoAsicAnalysis:
 			all_samples = []
 			for i in range(nevents):
 				ev = self.df.iloc[i]
-				wave = list(ev["Data"][ch]) #ADC counts
+				wave = list(ev["Data"][ch][window[0]:window[1]]) #ADC counts
 				all_samples = all_samples + wave
 
 			def gausfit(x, a, b, c):
@@ -268,7 +302,29 @@ class CryoAsicAnalysis:
 			#ax.plot(bc, gausfit(bc, *popt))
 			plt.show()
 			"""
-			
+
+	def plot_stds(self):
+
+		channels = self.df.iloc[0]["Channels"]
+		nevents = len(self.df.index)
+		
+		try:
+			stds = self.noise_df["STD"]
+		except:
+			print("No STD information present. Generating now:")
+			self.calculate_stds()
+		
+		fig, ax = plt.subplots()
+		ax.plot(channels, self.noise_df["STD"])
+		ax.set_xlabel("Channel number [ ]")
+		ax.set_ylabel("STD [ADC]")
+		ax.set_title("Cryo ASIC Noise by Channel")
+
+		axENC = ax.twinx()
+		ENCLim = self.ADC_to_ENC(ax.get_ylim())
+		axENC.set_ylim(ENCLim[0], ENCLim[1])
+		axENC.set_ylabel("ENC [e^-]")
+
 
 
 
