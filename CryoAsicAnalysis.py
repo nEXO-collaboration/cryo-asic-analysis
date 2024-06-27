@@ -420,6 +420,31 @@ class CryoAsicAnalysis:
 		#python magic
 		v = (img.sum(1) - np.diag(img))/(img.shape[1] - 1)
 		return np.mean(v)
+	
+
+	def calc_glitch_rate(self, thresh = 10, sample_rate = 1):
+		chs = sorted(self.df.iloc[0]["Channels"])
+		nevents = len(self.df.index) #looping through all events
+		glitch_count = 0
+		total_time = 0
+
+		for evt in range(nevents):
+			for channel in chs:
+				WVFM = self.get_wave(evt, channel)
+				
+				sigma = np.std(WVFM)
+				mu = np.mean(WVFM)
+
+				glitches = np.where(np.abs(WVFM-mu) > thresh*sigma)[0]
+				glitch_count += len(glitches)
+				total_time += len(WVFM)/sample_rate #time of waveform in us 
+		
+		glitch_rate = glitch_count/total_time
+		return glitch_rate
+
+
+
+
 
 
 
