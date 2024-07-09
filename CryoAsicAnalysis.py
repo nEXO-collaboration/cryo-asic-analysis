@@ -76,20 +76,35 @@ class CryoAsicAnalysis:
 			return True
 		else:
 			return False
+		
+
+
+	def create_df_from_event(self, evno):
+		evdf = pd.DataFrame()
+		ev = self.df.iloc[evno]
+		for i, ch in enumerate(ev["Channels"]):
+			ser = pd.Series()
+			ser["Channel"] = ch 
+			ser["Data"] = ev["Data"][i]
+			ser["ChannelX"] = ev["ChannelPositions"][i][0]
+			ser["ChannelY"] = ev["ChannelPositions"][i][1]
+			ser["ChannelType"] = ev["ChannelTypes"][i]
+			evdf = pd.concat([evdf, ser.to_frame().transpose()], ignore_index=True)
+
+		return evdf
 
 	#strips and dummy capacitors are populated
 	#on these boards. this function will tell if
 	#if it is strip or cap
 	def is_channel_strip(self, ch):
-		chs = self.df["Channels"].iloc[0]
-		chidx = chs.index(ch)
-		p = self.df["ChannelPositions"].iloc[0]
-		thisch_pos = p[chidx]
-		if(thisch_pos[0] >= 51):
-			return False
-		else:
+		ev = self.create_df_from_event(0)
+		xstrip_mask = (ev["ChannelType"] == 'x') & (ev["ChannelX"] <= 51)
+		ystrip_mask = (ev["ChannelType"] == 'y') & (ev["ChannelX"] == 102.0)
+		if(xstrip_mask[ch]) or (ystrip_mask[ch]):
 			return True
-		
+		else:
+			return False
+
 
 	#this is a pretty temporary function, because
 	#i am soon going to completely restructure the 
@@ -105,6 +120,7 @@ class CryoAsicAnalysis:
 		t = self.df["ChannelTypes"].iloc[0]
 		thisch_type = t[chidx]
 		return thisch_type, thisch_pos
+
 
 
 	#for the moment, we will baseline subtract based
@@ -417,6 +433,31 @@ class CryoAsicAnalysis:
 		#python magic
 		v = (img.sum(1) - np.diag(img))/(img.shape[1] - 1)
 		return np.mean(v)
+	
+
+	def calc_glitch_rate(self, thresh = 10, sample_rate = 1):
+		chs = sorted(self.df.iloc[0]["Channels"])
+		nevents = len(self.df.index) #looping through all events
+		glitch_count = 0
+		total_time = 0
+
+		for evt in range(nevents):
+			for channel in chs:
+				WVFM = self.get_wave(evt, channel)
+				
+				sigma = np.std(WVFM)
+				mu = np.mean(WVFM)
+
+				glitches = np.where(np.abs(WVFM-mu) > thresh*sigma)[0]
+				glitch_count += len(glitches)
+				total_time += len(WVFM)/sample_rate #time of waveform in us 
+		
+		glitch_rate = glitch_count/total_time
+		return glitch_rate
+
+
+
+
 
 
 
