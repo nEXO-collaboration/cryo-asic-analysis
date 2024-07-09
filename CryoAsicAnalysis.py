@@ -168,11 +168,10 @@ class CryoAsicAnalysis:
 
 		ev = self.df.iloc[evno]
 		for i, ch in enumerate(ev["Channels"]):
-			ser = pd.Series()
-			ser["Channel"].append(ch)
-			ser["Data"].append(ev["Data"][i])
-			ser["ChannelType"].append(self.get_channel_type(ch))
-			ser["ChannelPos"].append(self.get_channel_pos(ch))
+			ev_dict["Channel"].append(ch)
+			ev_dict["Data"].append(ev["Data"][i])
+			ev_dict["ChannelType"].append(self.get_channel_type(ch))
+			ev_dict["ChannelPos"].append(self.get_channel_pos(ch))
 
 		evdf = pd.DataFrame.from_dict(ev_dict)
 		return evdf
@@ -505,8 +504,8 @@ class CryoAsicAnalysis:
 		times = np.arange(0, nsamp*self.dT, self.dT)
 
 		#select only strips, X <= 51 is for strips and not capacitors
-		xstrip_mask = (ev["ChannelType"] == 'x') & (ev["ChannelX"] <= 51)
-		ystrip_mask = (ev["ChannelType"] == 'y') & (ev["ChannelX"] == 102.0)
+		xstrip_mask = (ev["ChannelType"] == 'x') 
+		ystrip_mask = (ev["ChannelType"] == 'y') 
 		xdf = ev[xstrip_mask]
 		ydf = ev[ystrip_mask]
 
@@ -520,44 +519,44 @@ class CryoAsicAnalysis:
 		dead_xpos = [] #dead channel positions
 		dead_ypos = [] #dead channel positions
 		ch_idx = 0
-		for i, row in (xdf.sort_values("ChannelX")).iterrows():
-			wave = row["Data"]
-			xpos.append(row["ChannelX"])
+		for i, row in xdf.iterrows():
+			xpos.append(row["ChannelPos"][1])
 			#is it a dead channel
 			if(row["Channel"] in self.config["dead_channels"]):
-				dead_xpos.append(row["ChannelX"])
+				dead_xpos.append(row["ChannelPos"][1])
 
+		#sort by positions
+		xpos = sorted(xpos)
+		for i, row in xdf.iterrows():
+			wave = row["Data"]
+			ch_idx = xpos.index(row["ChannelPos"][1])
 			for j in range(len(wave)):
 				xstrip_img[ch_idx][j] = wave[j]
 
 
-			ch_idx += 1
-
-		ch_idx = 0
-		for i, row in (ydf.sort_values("ChannelY")).iterrows():
-			wave = row["Data"]
-			ypos.append(row["ChannelY"])
+		for i, row in ydf.iterrows():
+			ypos.append(row["ChannelPos"][0])
 			#is it a dead channel
 			if(row["Channel"] in self.config["dead_channels"]):
-				dead_ypos.append(row["ChannelY"])
+				dead_ypos.append(row["ChannelPos"][0])
 
+		#sort by positions
+		ypos = sorted(ypos)
+		for i, row in ydf.iterrows():
+			wave = row["Data"]
+			ch_idx = ypos.index(row["ChannelPos"][0])
 			for j in range(len(wave)):
 				ystrip_img[ch_idx][j] = wave[j]
-
-			ch_idx += 1
-
-		pos_sort = sorted(xpos)
-		pitch = abs(pos_sort[0] - pos_sort[1])
 
 		if(ax is None):
 			fig, ax = plt.subplots(figsize=(12,16), nrows = 2)
 
 		xheat = ax[0].imshow(xstrip_img, cmap='viridis', interpolation='none',\
-			extent=[ min(times), max(times), max(xpos), min(xpos) - pitch],\
+			extent=[ min(times), max(times), max(xpos), min(xpos) - self.chmap[0]["strip_pitch"]],\
 			aspect=0.5*(max(times)/(max(xpos) - min(xpos))))
 
 		yheat = ax[1].imshow(ystrip_img, cmap='viridis', interpolation='none',\
-			extent=[min(times), max(times), max(ypos), min(ypos) - pitch],\
+			extent=[min(times), max(times), max(ypos), min(ypos) - self.chmap[0]["strip_pitch"]],\
 			aspect=0.5*(max(times)/(max(ypos) - min(ypos))))
 
 		xcbar = fig.colorbar(xheat, ax=ax[0])
@@ -574,9 +573,9 @@ class CryoAsicAnalysis:
 
 		#plot dead channels with lines through them
 		for p in dead_xpos:
-			ax[0].axhline(p-0.5*pitch, linewidth=2, color='r')
+			ax[0].axhline(p-0.5*self.chmap[0]["strip_pitch"], linewidth=2, color='r')
 		for p in dead_ypos:
-			ax[1].axhline(p-0.5*pitch, linewidth=2, color='r')
+			ax[1].axhline(p-0.5*self.chmap[0]["strip_pitch"], linewidth=2, color='r')
 
 		if(show):
 			plt.show()
@@ -654,28 +653,32 @@ class CryoAsicAnalysis:
 		ypos = []
 		xchs = []
 		ychs = []
-		ch_idx = 0
-		dead_chs = []
-		for i, row in (xdf.sort_values("ChannelPos")).iterrows():
-			wave = row["Data"]
+		for i, row in xdf.iterrows():
 			xpos.append(row["ChannelPos"][1])
 			xchs.append(row["Channel"])
+		
+		#sort the lists by position 
+		xpos, xchs = (list(t) for t in zip(*sorted(zip(xpos, xchs))))
+		for i, row in xdf.iterrows():
+			wave = row["Data"]
+			ch_idx = xchs.index(row["Channel"])
 			for j in range(len(wave)):
 				xstrip_img[ch_idx][j] = wave[j]*self.config["mv_per_adc"]
 
-			ch_idx += 1
-
-		ch_idx = 0
-		for i, row in (ydf.sort_values("ChannelY")).iterrows():
-			wave = row["Data"]
+		for i, row in ydf.iterrows():
 			ypos.append(row["ChannelPos"][0])
 			ychs.append(row["Channel"])
+
+
+		#sort the lists by position
+		ypos, ychs = (list(t) for t in zip(*sorted(zip(ypos, ychs))))
+		for i, row in ydf.iterrows():
+			wave = row["Data"]
+			ch_idx = ychs.index(row["Channel"])
 			for j in range(len(wave)):
 				ystrip_img[ch_idx][j] = wave[j]*self.config["mv_per_adc"]
 
-			ch_idx += 1
-
-		mv_shift = 10 #number of adc counts to shift traces
+		mv_shift = 50 #number of adc counts to shift traces
 
 		if(ax is None):
 			fig, ax = plt.subplots(figsize=(12,16), nrows=2)
