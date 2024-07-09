@@ -29,9 +29,6 @@ class CryoAsicFile:
 		self.load_config(config) #loads both of the above dictionaries
 
 		self.events = [] #events[event_no][channel] = [volts, volts, volts...]
-		self.scopes = [] #scopes[event_no]
-
-
 
 	def load_config(self, config):
 		#the config input is either a path to a yaml file or a dictionary.
@@ -170,7 +167,7 @@ class CryoAsicFile:
 			channels = []
 			waves = []
 			for ch, wave in enumerate(ev):
-				channels.append(ch) 
+				channels.append(ch + int(self.config["asic"])*64) #here we create unique Channel IDs for each asic in the system. 
 				waves.append(wave)
 
 			output_dict["Timestamp"].append(None) #trying to figure out where this lives in the raw data at the moment...
@@ -188,7 +185,7 @@ class CryoAsicFile:
 
 		print("Saving dataframe to file: " + outfile)
 		pickle.dump([self.waveform_df], open(outfile, 'wb'))
-		
+
 
 	def get_number_of_events(self):
 		return len(self.events)

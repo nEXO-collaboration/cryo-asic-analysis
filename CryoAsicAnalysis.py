@@ -1,6 +1,9 @@
 import sys
+import pickle
 import os
+import yaml
 import numpy as np 
+import math
 import matplotlib.pyplot as plt 
 import pandas as pd
 from scipy.signal import periodogram
@@ -12,23 +15,27 @@ from scipy import signal
 
 
 class CryoAsicAnalysis:
-	#takes a "config" dict which has analysis and data parameters
+	#the config input is the same format as commented in CryoAsicFile class,
+	#namely is either a dictionary or a yaml file path. 
 	def __init__(self, infile, config):
 		self.infile = infile
-		if(self.infile[-2:] != "h5" and self.infile[-4:] != "hdf5"):
-			print("Input file to CryoAsicEventViewer is not an hdf5 file: " + self.infile)
-			return
+		if(self.infile[-1:] != "p"):
+			print("The input file you have provided for CryoAsicAnalysis object is not a pickle file: " + self.infile)
+			return None
+		
+		#check if file exists
+		if(os.path.isfile(self.infile) == False):
+			print("The input file you have provided for CryoAsicAnalysis object does not exist: " + self.infile)
+			return None
+		
+
+		self.config = None #has global analysis config dictionary contents
+		self.chmap = None #has the channel and tile mappings. 
+		self.load_config(config) #loads both of the above dictionaries
 
 
-		#entries expected:
-		#baseline: [mintime, maxtime]
-		#pulse_threshold: thresh in adc counts
-		#sampling_rate: MHz sampling rate
-		#mv_per_adc: rough conversion, constant, assuming linearity
-		self.config = config 
-
-		print("loading hdf5 file " + self.infile)
-		self.df = pd.read_hdf(self.infile, key='raw')
+		print("loading the waveform dataframe from  " + self.infile)
+		self.df = pickle.load(open(self.infile, "rb"))[0] #0th element of the list is dataframe. 
 		print("Done loading")
 
 		self.nevents_total = len(self.df.index)
@@ -42,8 +49,82 @@ class CryoAsicAnalysis:
 		self.noise_df = pd.DataFrame(columns=["Channel", "Freqs", "PSD", "STD"]) #rows are channels, columns are noise information
 		self.noise_df.set_index("Channel")
 
-
 		self.corr_mat = None
+
+
+	def load_config(self, config):
+		#the config input is either a path to a yaml file or a dictionary.
+		#load the yaml file if it is a path
+		if(type(config) == str):
+			with open(config, 'r') as stream:
+				try:
+					self.config = yaml.safe_load(stream)
+				except yaml.YAMLError as exc:
+					print(exc)
+		else:
+			self.config = config
+
+
+		#now that the config is loaded, load the channel map file that
+		#is referenced in the config. Check if it exists
+		if(os.path.isfile(self.config["chmap"]) == False):
+			print("Cant find the channel map file: " + str(self.config["channel_map"]))
+			self.chmap = None
+			return 
+		
+		with open(self.config["chmap"], 'r') as stream:
+				try:
+					self.chmap = yaml.safe_load(stream)
+				except yaml.YAMLError as exc:
+					print(exc)
+		#done 
+
+	#get the channel type from the channel number
+	def get_channel_type(self, ch):
+		if(self.chmap is None):
+			print("Channel map didn't properly load")
+			return None
+		local_ch = ch % 64 #the channel number on the asic level. 
+		asic = math.floor(ch/64) # the asic ID that this ch corresponds to. 
+		
+		
+		if(asic in self.chmap):
+			if(local_ch in self.chmap[asic]["xstrips"]):
+				return 'x'
+			elif(local_ch in self.chmap[asic]["ystrips"]):
+				return 'y'
+			else:
+				return 'dummy'
+			
+		else:
+			print("Asic {:d} not found in the configuration file channel map".format(asic))
+			return None
+		
+	#returns the global position of the channel in the TPC
+	#using knowledge of the tile position. If it is a dummy, 
+	#return 0, 0 
+	def get_channel_pos(self, ch):
+		if(self.chmap is None):
+			print("Channel map didn't properly load")
+			return None
+
+		local_ch = ch % 64 #the channel number on the asic level. 
+		asic = math.floor(ch/64) # the asic ID that this ch corresponds to. 
+		tile_pos = self.chmap[asic]["tile_pos"]
+		pitch = self.chmap[asic]["strip_pitch"] #in mm
+
+		if(asic in self.chmap):
+			if(local_ch in self.chmap[asic]["xstrips"]):
+				local_pos = float(self.chmap[asic]["xstrips"][local_ch])
+				return (tile_pos[0], tile_pos[1] + local_pos*pitch)
+			elif(local_ch in self.chmap[asic]["ystrips"]):
+				local_pos = float(self.chmap[asic]["xstrips"][local_ch])
+				return (tile_pos[0] + local_pos*pitch, tile_pos[1])
+			else:
+				return tile_pos #this is a dummy capacitor
+		else:
+			print("Asic {:d} not found in the configuration file channel map".format(asic))
+			return None
 
 	@np.vectorize
 	def ADC_to_ENC(ADC, Gain=6, pt=1.2):
@@ -68,60 +149,41 @@ class CryoAsicAnalysis:
 		return idx 
 
 	def save_noise_df(self):
-		self.noise_df.to_hdf(self.infile[:-3]+"_noisedf.h5", key='noise')
+		pickle.dump([self.noise_df], open(self.infile[:-3]+"_noisedf.p", "wb"))
 
 	def load_noise_df(self):
-		if(os.path.exists(self.infile[:-3]+"_noisedf.h5")):
-			self.noise_df = pd.read_hdf(self.infile[:-3]+"_noisedf.h5")
+		if(os.path.exists(self.infile[:-3]+"_noisedf.p")):
+			self.noise_df = pickle.load(open(self.infile[:-3]+"_noisedf.p", "rb"))[0]
 			return True
 		else:
 			return False
-		
-
 
 	def create_df_from_event(self, evno):
 		evdf = pd.DataFrame()
+		ev_dict = {}
+		ev_dict["Channel"] = []
+		ev_dict["Data"] = []
+		ev_dict["ChannelType"] = []
+		ev_dict["ChannelPos"] = []
+
 		ev = self.df.iloc[evno]
 		for i, ch in enumerate(ev["Channels"]):
 			ser = pd.Series()
-			ser["Channel"] = ch 
-			ser["Data"] = ev["Data"][i]
-			ser["ChannelX"] = ev["ChannelPositions"][i][0]
-			ser["ChannelY"] = ev["ChannelPositions"][i][1]
-			ser["ChannelType"] = ev["ChannelTypes"][i]
-			evdf = pd.concat([evdf, ser.to_frame().transpose()], ignore_index=True)
+			ser["Channel"].append(ch)
+			ser["Data"].append(ev["Data"][i])
+			ser["ChannelType"].append(self.get_channel_type(ch))
+			ser["ChannelPos"].append(self.get_channel_pos(ch))
 
+		evdf = pd.DataFrame.from_dict(ev_dict)
 		return evdf
 
-	#strips and dummy capacitors are populated
-	#on these boards. this function will tell if
-	#if it is strip or cap
+
 	def is_channel_strip(self, ch):
-		ev = self.create_df_from_event(0)
-		xstrip_mask = (ev["ChannelType"] == 'x') & (ev["ChannelX"] <= 51)
-		ystrip_mask = (ev["ChannelType"] == 'y') & (ev["ChannelX"] == 102.0)
-		if(xstrip_mask[ch]) or (ystrip_mask[ch]):
-			return True
-		else:
+		result = self.get_channel_type(ch)
+		if(result == "dummy"):
 			return False
-
-
-	#this is a pretty temporary function, because
-	#i am soon going to completely restructure the 
-	#way the channel mapping is done. But for now,
-	#it returns the type and position of the strip
-	def get_strip_position(self, ch):
-		if(not self.is_channel_strip(ch)):
-			return None, None 
-		chs = self.df["Channels"].iloc[0]
-		chidx = chs.index(ch)
-		p = self.df["ChannelPositions"].iloc[0]
-		thisch_pos = p[chidx]
-		t = self.df["ChannelTypes"].iloc[0]
-		thisch_type = t[chidx]
-		return thisch_type, thisch_pos
-
-
+		else:
+			return True
 
 	#for the moment, we will baseline subtract based
 	#on an input window 
@@ -136,8 +198,6 @@ class CryoAsicAnalysis:
 			for ch in range(len(waves)):
 				base = np.mean(waves[ch][index_range[0]:index_range[1]])
 				row["Data"][ch] = np.array(waves[ch]) - base 
-
-
 
 
 	#this plots the waveforms from x and y all on the same plot, 
@@ -190,16 +250,6 @@ class CryoAsicAnalysis:
 			return ev["Data"][ch]
 		else:
 			return None
-		
-	def get_scope(self, evno):
-		if(evno < 0):
-			evno = 0
-		if(evno > self.nevents_total):
-			print("That event is not in the dataframe: " + str(evno))
-			return
-
-		ev = self.df.iloc[evno]
-		return ev["Scope"]
 
 	#for every channel, calculate a PSD using an event-by-event
 	#calculation, averaging over all events. Save these periodogram
@@ -223,9 +273,7 @@ class CryoAsicAnalysis:
 					continue
 
 				wave = [_*self.config["mv_per_adc"]/1000. for _ in wave] #putting ADC units into volts
-
 				
-
 				fs, pxx = periodogram(wave, self.sf*1e6)
 				if(pxx_tot is None):
 					pxx_tot = pxx 
@@ -298,7 +346,6 @@ class CryoAsicAnalysis:
 		if(len(self.noise_df.index) == 0):
 			print("No STD information present. Generating now:")
 			self.calculate_stds()
-
 		
 		xstrips = {"pos": [], "std": []}
 		ystrips = {"pos": [], "std": []}
@@ -307,20 +354,22 @@ class CryoAsicAnalysis:
 			ch = row["Channel"]
 			if(ch in self.config["dead_channels"]):
 				continue
-			if(self.is_channel_strip(ch)):
-				chtype, chpos = self.get_strip_position(ch)
-				if(chtype == "X"):
-					xstrips["pos"].append(chpos[1])
-					xstrips["std"].append(row["STD"])
-				elif(chtype == "Y"):
-					ystrips["pos"].append(chpos[0])
-					ystrips["std"].append(row["STD"])
+
+			typ = self.get_channel_type(ch)
+			if(typ == "x"):
+				xstrips["pos"].append(self.get_channel_pos(ch)[1])
+				xstrips["std"].append(row["STD"])
+			elif(typ == "y"):
+				ystrips["pos"].append(self.get_channel_pos(ch)[0])
+				ystrips["std"].append(row["STD"])
 			else:
-				if(len(caps["pos"]) == 0):
+				if(len(caps["pos"]) == 0);
 					caps["pos"].append(0)
-				else:
+				else:	
 					caps["pos"].append(caps["pos"][-1]+1)
+
 				caps["std"].append(row["STD"])
+
 		
 		fig, ax = plt.subplots()
 		axENC = ax.twinx()
