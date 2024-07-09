@@ -1,0 +1,47 @@
+
+#in the future, we may have multiple cryo asics active
+#in one analysis system. So at top level, we select
+#which cryo asic the file corresponds to and such. 
+
+cryoasics: 
+  0: 
+    tile_position: [0, 0] #x, y position of tile in the TPC, referencing the center of the tile 
+    strip_pitch: 6 #mm 
+    #format is dict[xstrips][cryoasic_ch_num] = y position of x strip in integer multiple of pitch
+    #Dummy channels are any channel numbers NOT in the below lists
+    xstrips: 
+      0: -8
+      2: -7
+      8: -6
+      10: -5
+      16: -4
+      18: -3
+      24: -2
+      26: -1
+      1: 1
+      3: 2
+      9: 3
+      11: 4
+      17: 5
+      19: 6
+      25: 7
+      27: 8
+    ystrips: 
+      58: -8
+      56: -7
+      50: -6
+      48: -5
+      42: -4
+      40: -3
+      34: -2
+      32: -1
+      59: 1
+      57: 2
+      51: 3
+      49: 4
+      43: 5
+      41: 6
+      35: 7
+      33: 8
+
+

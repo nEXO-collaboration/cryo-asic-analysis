@@ -3,31 +3,70 @@ import os
 import numpy as np 
 import matplotlib.pyplot as plt 
 import pandas as pd
+import yaml
+import pickle
 
 
 
 class CryoAsicFile:
 	#filename - path/to/datafile.dat, an output datafile from CRYOASIC software
-	#channel_map_fn - path/to/channelmap.txt same format as the channel maps from Struck parser,
-	#except that "slot" is replaced by "tile" (indexing the tile number)
-	def __init__(self, filename, channel_map_fn, tile_map_fn):
+	#the analysis config file contains path to the channel map file which has
+	#all positions of all strips, identifies strips vs dummies, and has local
+	#tile coordinates, as well as which ASIC identifiers are active. 
+	#You can also pass in a dictionary on its own so that at notebook level,
+	#you may parse many files in a loop with different configurations. So config
+	#is either a filename.yml or a dictionary object. 
+	def __init__(self, filename, config):
 		self.filename = filename #path to file
 		self.nevents = None #number of events in the file
-		self.waveform_df = None 
-		self.channel_map_fn = channel_map_fn #filename for channel map 
-		self.tile_map_fn = tile_map_fn #filename for tile position map
+		self.waveform_df = None
+		#initialize waveform df with a consistent column headers
+		self.initialized_waveform_df(self)
+		
+
+		self.config = None #has global analysis config dictionary contents
+		self.chmap = None #has the channel and tile mappings. 
+		self.load_config(config) #loads both of the above dictionaries
+
 		self.events = [] #events[event_no][channel] = [volts, volts, volts...]
 		self.scopes = [] #scopes[event_no]
 
-		#parse the channel map file right away, flag any errors before trying to load data
-		#structure: pandas dataframe with columns "Tile", "Channel", "Type", "LocalPosition"
-		self.channel_map = self.parse_channel_map()
-		#structure: pandas dataframe with columns "Tile", "X", "Y" (positions of center of tile in mm)
-		self.tile_map = self.parse_tile_map()
-		self.mapping_errors = self.check_mapping_errors() #checks to make sure values in the channel and tile map make sense and are 1:1
 
 
-		self.p = 6 #mm pitch between strips
+	def load_config(self, config):
+		#the config input is either a path to a yaml file or a dictionary.
+		#load the yaml file if it is a path
+		if(type(config) == str):
+			with open(config, 'r') as stream:
+				try:
+					self.config = yaml.safe_load(stream)
+				except yaml.YAMLError as exc:
+					print(exc)
+		else:
+			self.config = config
+
+
+		#now that the config is loaded, load the channel map file that
+		#is referenced in the config. Check if it exists
+		if(os.path.isfile(self.config["chmap"]) == False):
+			print("Cant find the channel map file: " + str(self.config["channel_map"]))
+			self.chmap = None
+			return 
+		
+		with open(self.config["chmap"], 'r') as stream:
+				try:
+					self.chmap = yaml.safe_load(stream)
+				except yaml.YAMLError as exc:
+					print(exc)
+		#done 
+
+	def initialized_waveform_df(self):
+		self.waveform_df = None
+		#Channels: a list of channel numbers for this ASIC, which from the map can reconstruct
+		#its position and type. 
+		#Timestamp: timestamp of the event (not yet implemented)
+		#Data: list of waveforms for each channel. 
+		self.waveform_df = pd.DataFrame(columns=['Channels','Timestamp','Data'])
 
 	#a lot of this function is a bit esoteric, so comments are sparse.
 	#i've taken this from Dionisio, on binary
@@ -104,45 +143,6 @@ class CryoAsicFile:
 		self.events = imgDesc 
 		print("Done loading " + str(len(self.events)) + " CRYO ASIC events")
 
-	def load_scope_data(self, nevents=None):
-		#this block reads in raw binary file into
-		#some interesting format?
-		f = open(self.filename, mode = 'rb')
-		file_header = [0]
-		numberOfFrames = 0
-		previousSize = 0
-		while (len(file_header)>0):
-			try:
-				# reads file header [the number of bytes to read, EVIO]
-				file_header = np.fromfile(f, dtype='uint32', count=2)
-				payloadSize = int(file_header[0]/4)-1 #-1 is need because size info includes the second word from the header
-				newPayload = np.fromfile(f, dtype='uint16', count=payloadSize*2) #(frame size splited by four to read 32 bit 
-				#save only serial data frames
-				if ((file_header[1]&0xff000000)>>24)==2: #image packet only, 2 mean scope data
-					if (numberOfFrames == 0):
-						allFrames = [newPayload.copy()]
-					else:
-						newFrame  = [newPayload.copy()]
-						allFrames = np.append(allFrames, newFrame, axis = 0)
-					numberOfFrames = numberOfFrames + 1 
-					previousSize = file_header
-
-				if (numberOfFrames%1000==0):
-					print("Read %d scope events from CRYO ASIC file" % numberOfFrames)
-
-			except Exception: 
-				e = sys.exc_info()[0]
-				print ("Message\n", e)
-				print ('size', file_header, 'previous size', previousSize)
-				print("numberOfFrames read: " ,numberOfFrames)
-		
-
-
-		print("Finished reading raw binary scope data")
-		self.scopes = allFrames
-		#this block descrambles the format to a structured list of events
-		#like event[number][ch] = [...,...,..., waveform]
-
 
 	#this is distinct from load_raw_data in that it references
 	#the channel map that has been configured in this class, and could
@@ -150,8 +150,7 @@ class CryoAsicFile:
 	#it also then stores into pandas dataframe structure, which takes some computing time.
 	def group_into_pandas(self):
 		#clear the present waveform df
-		self.waveform_df = None
-		self.waveform_df = pd.DataFrame(columns=['Channels','Timestamp','Data','ChannelTypes','ChannelPositions', 'Scope'])
+		self.initialized_waveform_df()
 
 		#check that data has been loaded in from binary
 		if(len(self.events) == 0):
@@ -159,176 +158,40 @@ class CryoAsicFile:
 			print("Please do that before grouping into pandas dataframe")
 			return 
 
-		#check that maps have been loaded in correctly
-		if(self.channel_map is None):
-			print("Did not find channel map, please re-load channel map or check the config file")
-		if(self.tile_map is None):
-			print("Did not find tile map, please re-load tile map or check the config file")
-
-
-		#the match between Tile map and channel map is checked prior to data loading
-		#(to save time in case of large data files). Check the line in the __init__ of this class.
-
 		#start parsing events.
+		columns = self.waveform_df.columns
+		#it is way faster to work with a dictionary and then
+		#convert to dataframe in one fell swoop. 
+		output_dict = {} 
+		for c in columns:
+			output_dict[c] = [] #event indexed
+
 		for ev in self.events:
-			ev_ser = pd.Series()
 			channels = []
-			channel_types = []
-			channel_positions = []
 			waves = []
 			for ch, wave in enumerate(ev):
-				if(ch not in list(self.channel_map["Channel"])):
-					print("Could not find channel " + str(ch) + " in channel map, but did find it in event data")
-					continue
-				#presently, there are two tiles worth of channels per asic. 
-				#The software and electronics are not anywhere near having
-				#multi-ASIC readout, so for the moment I will leave the channel ID
-				#structure for a later time. Channel number will just be 1-63
 				channels.append(ch) 
-				typ = list(self.channel_map[self.channel_map["Channel"] == ch]["Type"])[0]
-				if('x' in typ.lower()):
-					channel_types.append('x')
-					typ = 'x'
-				else:
-					channel_types.append('y')
-					typ = 'y'
 				waves.append(wave)
 
-				#Here, we want to add the global position of the strip. Find the definitions
-				#of this, and how its parsed from the maps, in the following function
-				tile_id = int(self.channel_map[self.channel_map["Channel"] == ch]["Tile"].iloc[0])
-				channel_positions.append(self.get_ch_position(tile_id, ch, typ))
+			output_dict["Timestamp"].append(None) #trying to figure out where this lives in the raw data at the moment...
+			output_dict["Channels"].append(channels)
+			output_dict["Data"].append(waves)
 
-			ev_ser["Timestamp"] = None #trying to figure out where this lives in the raw data at the moment...
-			ev_ser["Channels"] = channels
-			ev_ser["ChannelTypes"] = channel_types
-			ev_ser["ChannelPositions"] = channel_positions
-			ev_ser["Data"] = waves 
-			self.waveform_df = pd.concat([self.waveform_df, ev_ser.to_frame().transpose()], ignore_index=True)
-		if(len(self.scopes)) > 0:
-			self.waveform_df['Scope'] = self.scopes.tolist()
+		self.waveform_df = pd.DataFrame(output_dict) #convert to dataframe
 
 
-
-	def save_to_hdf5(self, outfile=None):
+	def pickle_dump_waveform_df(self, outfile=None):
 		if(outfile is None):
 			#just use the input filename but with a tag at the end (presently no tag), and h5 suffix
 			#infile suffix will always be ".dat", so assume that and modify the end of filepath
-			outfile = self.filename[:-4] + ".h5"
+			outfile = self.filename[:-4] + ".p"
 
 		print("Saving dataframe to file: " + outfile)
-		self.waveform_df.to_hdf(outfile, key='raw')
-
-
-
-	def get_ch_position(self, tile_id, ch, typ):
-		tile_coord_series = self.tile_map[self.tile_map["Tile"] == tile_id]
-		tile_center = np.array([float(tile_coord_series['X'].iloc[0]), float(tile_coord_series['Y'].iloc[0])])
-
-		strip_local_pos = float(self.channel_map[self.channel_map["Channel"] == ch]["LocalPosition"].iloc[0])
-		#this local position is an integer multiple number of strips from center. For 32 channels, 16
-		#strips per side, this goes -8,-7,-6,-5,-4,-3,-2,-1,1,2,3,... note the lack of 0. The -1 strip
-		#is 0.5*pitch to the left of center (in x direction). Hence, the 0.5 below. 
-		direc = np.sign(strip_local_pos) 
-		if(typ == 'x'):
-			strip_center = np.array([direc*(np.abs(strip_local_pos) - 0.5)*self.p, 0])
-		else:
-			strip_center = np.array([0, direc*(np.abs(strip_local_pos) - 0.5)*self.p])
-
-		strip_global_center = strip_center + tile_center
-		return strip_global_center
-
+		pickle.dump([self.waveform_df], open(outfile, 'wb'))
 		
 
 	def get_number_of_events(self):
 		return len(self.events)
-
-
-	#NOTE: there are both local and global positions
-	#found in the channel map configuration file. 
-	def parse_channel_map(self):
-
-		#check if channel map file exists
-		if(os.path.isfile(self.channel_map_fn) == False):
-			print("Cant find the channel map file: " + str(self.channel_map_fn))
-			return None
-
-		#the header=9 sets the 9th line in the file to be the column names
-		#for the dataframe
-		chmap = pd.read_csv(self.channel_map_fn, sep=',', header=11)
-		correct_column_names = ["Tile", "Channel", "Type", "LocalPosition"]
-		#check that there aren't typos in the file's column names
-		error_found = False
-		for k in correct_column_names:
-			if(k not in chmap.columns):
-				print("Typo in channel map, didn't find column : " + k)
-				error_found = True
-
-		if(error_found):
-			print("Please have the columns match these values:")
-			print(correct_column_names)
-			print("instead, we read line: ", end='')
-			print(chmap.columns)
-			return None
-
-
-		#convert columns from string to their expected types
-		chmap = chmap.astype({"Tile": "int32", "Channel": "int32", "Type": "string", "LocalPosition": "float"})
-		return chmap
-
-	#NOTE: there are both local and global positions
-	#found in the channel map configuration file. 
-	def parse_tile_map(self):
-
-		#check if channel map file exists
-		if(os.path.isfile(self.tile_map_fn) == False):
-			print("Cant find the tile map file: " + str(self.tile_map_fn))
-			return None
-
-		#the header=9 sets the 9th line in the file to be the column names
-		#for the dataframe
-		chmap = pd.read_csv(self.tile_map_fn, sep=',', header=8)
-		correct_column_names = ["Tile", "X", "Y"]
-		#check that there aren't typos in the file's column names
-		error_found = False
-		for k in correct_column_names:
-			if(k not in chmap.columns):
-				print("Typo in tile map, didn't find column : " + k)
-				error_found = True
-
-		if(error_found):
-			print("Please have the columns match these values:")
-			print(correct_column_names)
-			print("instead, we read line: ", end='')
-			print(chmap.columns)
-			return None
-
-
-		#convert columns from string to their expected types
-		chmap = chmap.astype({"Tile": "int32", "X":"float", "Y":"float"})
-		return chmap
-
-	#returns a list of errors in the map files. 
-	#returns empty list if all good. 
-	#Values:
-	# 1 if Tile IDs aren't 1:1 between channel and tile map
-	def check_mapping_errors(self):
-		errors = []
-		tiles_in_chmap = sorted(set(list(self.channel_map["Tile"])))
-		tiles_in_tilemap = sorted(set(list(self.tile_map["Tile"])))
-		if(tiles_in_chmap != tiles_in_tilemap):
-			print("Tile IDs in tile map do not match those of channel map exactly:")
-			print("Chmap tile IDs:" , end = ' ')
-			print(tiles_in_chmap)
-			print("Tile map tile IDs:" , end = ' ')
-			print(tiles_in_tilemap)
-			errors.append(1)
-
-		return errors
-
-
-
-
 
 	#a utility function for parsing the binary format from the CRYO asic
 	def descramble_cryo_image(self, rawData):
