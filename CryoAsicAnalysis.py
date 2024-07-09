@@ -363,7 +363,7 @@ class CryoAsicAnalysis:
 				ystrips["pos"].append(self.get_channel_pos(ch)[0])
 				ystrips["std"].append(row["STD"])
 			else:
-				if(len(caps["pos"]) == 0);
+				if(len(caps["pos"]) == 0):
 					caps["pos"].append(0)
 				else:	
 					caps["pos"].append(caps["pos"][-1]+1)
@@ -505,26 +505,305 @@ class CryoAsicAnalysis:
 		return glitch_rate
 
 
+############################################################################################
+# Event viewer functions
+############################################################################################
+
+	#plots the event in the same way that the CRYO ASIC GUI
+	#event viewer plots, with a 2D greyscale hist using the
+	#*channel numbers as the y axis bins and the time on x axis. 
+	#this is distinct from other plots in that usually the positions
+	#of the strips are used as the y axis; in this way, this is more
+	#what the ASIC sees, ordering based on the asic channel IDs. 
+	def plot_event_rawcryo(self, evno, ax=None, show=True):
+		if(evno < 0):
+			evno = 0
+		if(evno > self.nevents_total):
+			print("That event is not in the dataframe: " + str(evno))
+			return
+
+		ev = self.df.iloc[evno]
+		chs = ev["Channels"]
+		waves = ev["Data"]
+		#sort them simultaneously by channel number
+		chs, waves = (list(t) for t in zip(*sorted(zip(chs, waves))))
+		nch = len(chs)
+		nsamp = len(waves[0])
+		times = np.arange(0, nsamp*self.dT, self.dT)
+
+		img = np.zeros((nch, len(times)))
+
+
+		#this is a fancy pandas way of making a 2D hist. I always
+		#have trouble finding the meshgrid way of doing this. 
+		#please modify this if you have a better way. 
+		for i, ch in enumerate(chs):
+			for j, t in enumerate(times):
+				img[i][j] = waves[i][j]
+
+
+		if(ax is None):
+			fig, ax = plt.subplots(figsize=(12,8))
+
+		heat = ax.imshow(img, cmap='viridis',interpolation='none', \
+			extent=[min(times), max(times), max(chs) + 1, min(chs) - 1],\
+			aspect=0.5*(max(times)/max(chs)))
+
+		#mark dead channels
+		for ch in self.config["dead_channels"]:
+			ax.axhline(ch, linewidth=1, color='r')
+
+		cbar = fig.colorbar(heat, ax=ax)
+		cbar.set_label("ADC counts", labelpad=3)
+		ax.set_xlabel("time (us)")
+		ax.set_ylabel("ASIC ch number")
+		ax.set_title("event number " + str(evno))
+		
+		if(show):
+			plt.show()
+		return fig, ax 
 
 
 
+	#plots the event with a 2D hist where each tile has two subplots:
+	#one for the X strips and one for the Y strips. Time on x axis, 
+	#local channel position on Y axis. Finds all tiles and generates
+	#subplots for each. For the moment, only does strips and not caps
+	def plot_event_xysep(self, evno, ax=None, show=True):
+		if(evno < 0):
+			evno = 0
+		if(evno > self.nevents_total):
+			print("That event is not in the dataframe: " + str(evno))
+			return
+
+		ev = self.create_df_from_event(evno)
+		nsamp = len(ev["Data"].iloc[0])
+		times = np.arange(0, nsamp*self.dT, self.dT)
+
+		#select only strips, X <= 51 is for strips and not capacitors
+		xstrip_mask = (ev["ChannelType"] == 'x') & (ev["ChannelX"] <= 51)
+		ystrip_mask = (ev["ChannelType"] == 'y') & (ev["ChannelX"] == 102.0)
+		xdf = ev[xstrip_mask]
+		ydf = ev[ystrip_mask]
+
+		#this is a fancy pandas way of making a 2D hist. I always
+		#have trouble finding the meshgrid way of doing this. 
+		#please modify this if you have a better way. 
+		xstrip_img = np.zeros((len(xdf.index), len(times)))
+		ystrip_img = np.zeros((len(ydf.index), len(times)))
+		xpos = []
+		ypos = []
+		dead_xpos = [] #dead channel positions
+		dead_ypos = [] #dead channel positions
+		ch_idx = 0
+		for i, row in (xdf.sort_values("ChannelX")).iterrows():
+			wave = row["Data"]
+			xpos.append(row["ChannelX"])
+			#is it a dead channel
+			if(row["Channel"] in self.config["dead_channels"]):
+				dead_xpos.append(row["ChannelX"])
+
+			for j in range(len(wave)):
+				xstrip_img[ch_idx][j] = wave[j]
 
 
+			ch_idx += 1
+
+		ch_idx = 0
+		for i, row in (ydf.sort_values("ChannelY")).iterrows():
+			wave = row["Data"]
+			ypos.append(row["ChannelY"])
+			#is it a dead channel
+			if(row["Channel"] in self.config["dead_channels"]):
+				dead_ypos.append(row["ChannelY"])
+
+			for j in range(len(wave)):
+				ystrip_img[ch_idx][j] = wave[j]
+
+			ch_idx += 1
+
+		pos_sort = sorted(xpos)
+		pitch = abs(pos_sort[0] - pos_sort[1])
+
+		if(ax is None):
+			fig, ax = plt.subplots(figsize=(12,16), nrows = 2)
+
+		xheat = ax[0].imshow(xstrip_img, cmap='viridis', interpolation='none',\
+			extent=[ min(times), max(times), max(xpos), min(xpos) - pitch],\
+			aspect=0.5*(max(times)/(max(xpos) - min(xpos))))
+
+		yheat = ax[1].imshow(ystrip_img, cmap='viridis', interpolation='none',\
+			extent=[min(times), max(times), max(ypos), min(ypos) - pitch],\
+			aspect=0.5*(max(times)/(max(ypos) - min(ypos))))
+
+		xcbar = fig.colorbar(xheat, ax=ax[0])
+		xcbar.set_label("ADC counts", labelpad=3)
+		ax[0].set_xlabel("time (us)")
+		ax[0].set_ylabel("x - strip position")
+		ax[0].set_title("event number " + str(evno))
+
+		ycbar = fig.colorbar(yheat, ax=ax[1])
+		ycbar.set_label("ADC counts", labelpad=3)
+		ax[1].set_xlabel("time (us)")
+		ax[1].set_ylabel("y - strip position")
+		ax[1].set_title("event number " + str(evno))
+
+		#plot dead channels with lines through them
+		for p in dead_xpos:
+			ax[0].axhline(p-0.5*pitch, linewidth=2, color='r')
+		for p in dead_ypos:
+			ax[1].axhline(p-0.5*pitch, linewidth=2, color='r')
+
+		if(show):
+			plt.show()
+
+		return fig, ax 
 
 
+	
+	#this plots the waveforms from x and y all on the same plot, 
+	#overlayed, but with traces shifted relative to eachother by 
+	#some number of ADC counts. if tileno is not none, it only plots
+	#one tile, associated with an integer passed as argument
+	def plot_event_waveforms_separated(self, evno, ax=None, show=True):
+		if(evno < 0):
+			evno = 0
+		if(evno > self.nevents_total):
+			print("That event is not in the dataframe: " + str(evno))
+			return
 
-				
+		ev = self.df.iloc[evno]
+
+		adc_shift = 0 #number of adc counts to shift traces
+
+		chs = ev["Channels"]
+		waves = ev["Data"]
+		#sort them simultaneously by channel number
+		chs, waves = (list(t) for t in zip(*sorted(zip(chs, waves))))
+		nch = len(chs)
+		nsamp = len(waves[0])
+		times = np.arange(0, nsamp*self.dT, self.dT)
+
+		if(ax is None):
+			fig, ax = plt.subplots(figsize=(10,8))
+		curshift = 0
+		for i in range(nch):
+			ax.plot(times, waves[i] + curshift, label=str(chs[i]))
+			curshift += adc_shift
+
+		ax.set_xlabel('time (us)')
+		ax.set_ylabel("channel shifted adc counts")
+
+		if(show):
+			plt.show()
+		return fig, ax 
+
+
+	#this plots the waveforms from x and y all on the same plot, 
+	#overlayed, but with traces shifted relative to eachother by 
+	#some number of ADC counts. if tileno is not none, it only plots
+	#one tile, associated with an integer passed as argument
+	def plot_strips_waveforms_separated(self, evno, ax = None, show=True):
+		if(evno < 0):
+			evno = 0
+		if(evno > self.nevents_total):
+			print("That event is not in the dataframe: " + str(evno))
+			return
+
+
+		ev = self.create_df_from_event(evno)
+		nsamp = len(ev["Data"].iloc[0])
+		times = np.arange(0, nsamp*self.dT, self.dT)
+
+		#the create_df_from_event function identifies the type of each channel at play. 
+		xstrip_mask = (ev["ChannelType"] == 'x')
+		ystrip_mask = (ev["ChannelType"] == 'y')
+		xdf = ev[xstrip_mask]
+		ydf = ev[ystrip_mask]
+
+		#this is a fancy pandas way of making a 2D hist. I always
+		#have trouble finding the meshgrid way of doing this. 
+		#please modify this if you have a better way. 
+		xstrip_img = np.zeros((len(xdf.index), len(times)))
+		ystrip_img = np.zeros((len(ydf.index), len(times)))
+		xpos = []
+		ypos = []
+		xchs = []
+		ychs = []
+		ch_idx = 0
+		dead_chs = []
+		for i, row in (xdf.sort_values("ChannelPos")).iterrows():
+			wave = row["Data"]
+			xpos.append(row["ChannelPos"][1])
+			xchs.append(row["Channel"])
+			for j in range(len(wave)):
+				xstrip_img[ch_idx][j] = wave[j]*self.config["mv_per_adc"]
+
+			ch_idx += 1
+
+		ch_idx = 0
+		for i, row in (ydf.sort_values("ChannelY")).iterrows():
+			wave = row["Data"]
+			ypos.append(row["ChannelPos"][0])
+			ychs.append(row["Channel"])
+			for j in range(len(wave)):
+				ystrip_img[ch_idx][j] = wave[j]*self.config["mv_per_adc"]
+
+			ch_idx += 1
+
+		mv_shift = 10 #number of adc counts to shift traces
+
+		if(ax is None):
+			fig, ax = plt.subplots(figsize=(12,16), nrows=2)
+
+		curshift = 0
+		for i in range(len(xstrip_img)):
+			if(xchs[i] in self.config["dead_channels"] or xchs[i] == self.config["key_channel"]):
+				ax[0].plot(times, np.array(xstrip_img[i]) + curshift, 'k', label=str(xpos[i]))
+			else:
+				ax[0].plot(times, np.array(xstrip_img[i]) + curshift, label=str(xpos[i]))
 			
-				
+			curshift += mv_shift
 
+		curshift = 0
+		for i in range(len(ystrip_img)):
+			if(ychs[i] in self.config["dead_channels"] or ychs[i] == self.config["key_channel"]):
+				ax[1].plot(times, np.array(ystrip_img[i]) + curshift, 'k', label=str(ypos[i]))
+			else:
+				ax[1].plot(times, np.array(ystrip_img[i]) + curshift, label=str(ypos[i]))
+			
+			curshift += mv_shift
 
+		ax[0].set_xlabel('time (us)')
+		ax[0].set_title("X-strips, event {:d}".format(evno))
+		ax[0].set_ylabel("shifted mV")
+		ax[1].set_xlabel('time (us)')
+		ax[1].set_ylabel("shifted mV")
+		ax[1].set_title("Y-strips, event {:d}".format(evno))
+		#ax[0].set_ylim([-10, 200])
+		#ax[1].set_ylim([-10, 200])
 
+		if(show):
+			plt.show()
 
+		return fig, ax
+		
+	
+	def plot_event_ch(self, evno, ch, ax = None, show=True):
+		ev = self.create_df_from_event(evno)
+		ev_ch = ev[ev["Channel"] == ch]
+		wave = list(ev_ch["Data"])[0]
+		nsamp = len(wave)
+		times = np.arange(0, nsamp*self.dT, self.dT)
 
+		if(ax is None):
+			fig, ax = plt.subplots(figsize=(12, 8))
+			
+		ax.plot(times, wave, label=str(ch))
+		ax.set_xlabel("time (us)")
+		ax.set_ylabel("adc counts")
 
-
-
-
-
-
-
+		if(show):
+			ax.set_title("Channel " + str(ch))
+			plt.show()
+		return fig, ax
