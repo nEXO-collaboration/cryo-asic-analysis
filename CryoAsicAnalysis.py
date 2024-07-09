@@ -40,7 +40,7 @@ class CryoAsicAnalysis:
 
 		self.nevents_total = len(self.df.index)
 
-		self.sf = config["sampling_rate"] #MHz "sf": sampling_frequency
+		self.sf = float(self.config["sampling_rate"]) #MHz "sf": sampling_frequency
 		self.dT = 1.0/self.sf
 		self.nsamples = len(self.df.iloc[0]["Data"][0])
 		self.times = np.arange(0, self.nsamples*self.dT, self.dT)
@@ -116,10 +116,10 @@ class CryoAsicAnalysis:
 		if(asic in self.chmap):
 			if(local_ch in self.chmap[asic]["xstrips"]):
 				local_pos = float(self.chmap[asic]["xstrips"][local_ch])
-				return (tile_pos[0], tile_pos[1] + local_pos*pitch)
+				return (tile_pos[0], tile_pos[1] + np.sign(local_pos)*(np.abs(local_pos) - 0.5)*pitch)
 			elif(local_ch in self.chmap[asic]["ystrips"]):
-				local_pos = float(self.chmap[asic]["xstrips"][local_ch])
-				return (tile_pos[0] + local_pos*pitch, tile_pos[1])
+				local_pos = float(self.chmap[asic]["ystrips"][local_ch])
+				return (tile_pos[0] + np.sign(local_pos)*(np.abs(local_pos) - 0.5)*pitch, tile_pos[1])
 			else:
 				return tile_pos #this is a dummy capacitor
 		else:
@@ -316,82 +316,6 @@ class CryoAsicAnalysis:
 
 			self.noise_df.at[ch, "STD"] = np.std(all_samples)
 			self.noise_df.at[ch, "Channel"] = ch
-
-
-	def plot_stds(self):
-
-		channels = self.df.iloc[0]["Channels"]
-		nevents = len(self.df.index)
-		
-		try:
-			stds = self.noise_df["STD"]
-		except:
-			print("No STD information present. Generating now:")
-			self.calculate_stds()
-		
-		fig, ax = plt.subplots()
-		ax.plot(channels, self.noise_df["STD"])
-		ax.set_xlabel("Channel number [ ]")
-		ax.set_ylabel("STD [ADC]")
-		ax.set_title("Cryo ASIC Noise by Channel")
-
-		axENC = ax.twinx()
-		ENCLim = self.ADC_to_ENC(ax.get_ylim())
-		axENC.set_ylim(ENCLim[0], ENCLim[1])
-		axENC.set_ylabel("ENC [e^-]")
-
-
-
-	def plot_stds_strip_position(self, show=True):
-		if(len(self.noise_df.index) == 0):
-			print("No STD information present. Generating now:")
-			self.calculate_stds()
-		
-		xstrips = {"pos": [], "std": []}
-		ystrips = {"pos": [], "std": []}
-		caps = {"pos": [], "std": []}
-		for i, row in self.noise_df.iterrows():
-			ch = row["Channel"]
-			if(ch in self.config["dead_channels"]):
-				continue
-
-			typ = self.get_channel_type(ch)
-			if(typ == "x"):
-				xstrips["pos"].append(self.get_channel_pos(ch)[1])
-				xstrips["std"].append(row["STD"])
-			elif(typ == "y"):
-				ystrips["pos"].append(self.get_channel_pos(ch)[0])
-				ystrips["std"].append(row["STD"])
-			else:
-				if(len(caps["pos"]) == 0):
-					caps["pos"].append(0)
-				else:	
-					caps["pos"].append(caps["pos"][-1]+1)
-
-				caps["std"].append(row["STD"])
-
-		
-		fig, ax = plt.subplots()
-		axENC = ax.twinx()
-		ax.scatter(xstrips["pos"], xstrips["std"], label="X Strips", s=100)
-		ax.scatter(ystrips["pos"], ystrips["std"], label="Y Strips", s=100)
-		ax.scatter(caps["pos"], caps["std"], label="Caps", s=100)
-		ax.set_xlabel("Strip Position [mm]")
-		ax.set_ylabel("STD [ADC]")
-		ENCLim = self.ADC_to_ENC(ax.get_ylim(), self.config["gain"], self.config["pt"])
-		axENC.set_ylim(ENCLim[0], ENCLim[1])
-		axENC.set_ylabel("ENC [e^-]")
-		ax.grid(False)
-		axENC.grid(False)
-		ax.legend()
-
-		if(show):
-			plt.show()
-
-		return fig, ax, axENC 
-
-				
-
 
 
 
@@ -798,7 +722,7 @@ class CryoAsicAnalysis:
 
 		if(ax is None):
 			fig, ax = plt.subplots(figsize=(12, 8))
-			
+
 		ax.plot(times, wave, label=str(ch))
 		ax.set_xlabel("time (us)")
 		ax.set_ylabel("adc counts")
@@ -807,3 +731,114 @@ class CryoAsicAnalysis:
 			ax.set_title("Channel " + str(ch))
 			plt.show()
 		return fig, ax
+	
+
+	def plot_stds(self, ax=None, show=True):
+		if(len(self.noise_df.index) == 0):
+			print("No STD information present. Generating now:")
+			self.calculate_stds()
+
+
+		channels = self.df.iloc[0]["Channels"]
+
+		xstrips = {"ch": [], "std": []}
+		ystrips = {"ch": [], "std": []}
+		dummies = {"ch": [], "std": []}
+
+		for i, row in self.noise_df.iterrows():
+			ch = row["Channel"]
+			typ = self.get_channel_type(ch)
+			if(typ == "x"):
+				xstrips["ch"].append(ch)
+				xstrips["std"].append(row["STD"])
+			elif(typ == "y"):
+				ystrips["ch"].append(ch)
+				ystrips["std"].append(row["STD"])
+			else:
+				dummies["ch"].append(ch)
+				dummies["std"].append(row["STD"])
+		
+		
+		if(ax is None):
+			fig, ax = plt.subplots()
+
+		xmean = self.ADC_to_ENC(np.mean(xstrips["std"]))
+		ymean = self.ADC_to_ENC(np.mean(ystrips["std"]))
+		dmean = self.ADC_to_ENC(np.mean(dummies["std"]))
+		ax.scatter(xstrips["ch"], xstrips["std"], label="X Strips: {:.1f} e- mean".format(xmean), s=100)
+		ax.scatter(ystrips["ch"], ystrips["std"], label="Y Strips: {:.1f} e- mean".format(ymean), s=100)
+		ax.scatter(dummies["ch"], dummies["std"], label="dummies: {:.1f} e- mean".format(dmean), s=100)
+		ax.set_xlabel("Channel number")
+		ax.set_ylabel("STD [ADC]")
+		ax.set_title("Cryo ASIC Noise by Channel")
+		ax.legend()
+		ax.grid(False)
+
+		axENC = ax.twinx()
+		ENCLim = self.ADC_to_ENC(ax.get_ylim())
+		axENC.set_ylim(ENCLim[0], ENCLim[1])
+		axENC.set_ylabel("ENC [e^-]")
+		axENC.grid(False)
+
+		if(show):
+			plt.show()
+		
+		return fig, ax
+	
+
+
+
+	def plot_stds_strip_position(self, ax=None, show=True):
+		if(len(self.noise_df.index) == 0):
+			print("No STD information present. Generating now:")
+			self.calculate_stds()
+
+
+		channels = self.df.iloc[0]["Channels"]
+
+		xstrips = {"pos": [], "std": []}
+		ystrips = {"pos": [], "std": []}
+		dummies = {"pos": [], "std": []}
+
+		for i, row in self.noise_df.iterrows():
+			ch = row["Channel"]
+			typ = self.get_channel_type(ch)
+			if(typ == "x"):
+				xstrips["pos"].append(self.get_channel_pos(ch)[1])
+				xstrips["std"].append(row["STD"])
+			elif(typ == "y"):
+				ystrips["pos"].append(self.get_channel_pos(ch)[0])
+				ystrips["std"].append(row["STD"])
+			else:
+				dummies["pos"].append(self.get_channel_pos(ch)[0])
+				dummies["std"].append(row["STD"])
+		
+		
+		if(ax is None):
+			fig, ax = plt.subplots()
+
+		xmean = self.ADC_to_ENC(np.mean(xstrips["std"]))
+		ymean = self.ADC_to_ENC(np.mean(ystrips["std"]))
+		dmean = self.ADC_to_ENC(np.mean(dummies["std"]))
+		ax.scatter(xstrips["pos"], xstrips["std"], label="X Strips: {:.1f} e- mean".format(xmean), s=100)
+		ax.scatter(ystrips["pos"], ystrips["std"], label="Y Strips: {:.1f} e- mean".format(ymean), s=100)
+		ax.scatter(dummies["pos"], dummies["std"], label="dummies: {:.1f} e- mean".format(dmean), s=100)
+		ax.set_xlabel("Strip position [mm]")
+		ax.set_ylabel("STD [ADC]")
+		ax.set_title("Cryo ASIC Noise by Channel")
+		ax.legend()
+		ax.grid(False)
+
+		axENC = ax.twinx()
+		ENCLim = self.ADC_to_ENC(ax.get_ylim())
+		axENC.set_ylim(ENCLim[0], ENCLim[1])
+		axENC.set_ylabel("ENC [e^-]")
+		axENC.grid(False)
+
+		if(show):
+			plt.show()
+		
+		return fig, ax
+
+				
+

@@ -1,4 +1,4 @@
-chmap: config/channelmap.yml
+chmap: ../config/channelmap.yml
 baseline: [10, 20] #in microseconds relative to the start of the event window
 sampling_rate: 1 #MSPS
 gain: 6 #encoded gain integer, corresponding to something on order 30 mV/fC (check manual for accurate gains)

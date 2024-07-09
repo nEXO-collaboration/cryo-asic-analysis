@@ -21,7 +21,7 @@ class CryoAsicFile:
 		self.nevents = None #number of events in the file
 		self.waveform_df = None
 		#initialize waveform df with a consistent column headers
-		self.initialized_waveform_df(self)
+		self.initialized_waveform_df()
 		
 
 		self.config = None #has global analysis config dictionary contents
@@ -46,7 +46,7 @@ class CryoAsicFile:
 		#now that the config is loaded, load the channel map file that
 		#is referenced in the config. Check if it exists
 		if(os.path.isfile(self.config["chmap"]) == False):
-			print("Cant find the channel map file: " + str(self.config["channel_map"]))
+			print("Cant find the channel map file: " + str(self.config["chmap"]))
 			self.chmap = None
 			return 
 		
@@ -83,20 +83,21 @@ class CryoAsicFile:
 				payloadSize = int(file_header[0]/4)-1 #-1 is need because size info includes the second word from the header
 				newPayload = np.fromfile(f, dtype='uint32', count=payloadSize) #(frame size splited by four to read 32 bit 
 				#save only serial data frames
-				if ((file_header[1]&0xff000000)>>24)==1: #image packet only, 2 mean scope data
+				if (((file_header[1] & 0xff000000) >> 24) == 1): #image packet only, 2 mean scope data
 					if (numberOfFrames == 0): 
 						allFrames = [newPayload.copy()]
 					else:
 						newFrame  = [newPayload.copy()]
-						if numberOfFrames >= nskip:
+						if(numberOfFrames >= nskip):
 							allFrames = np.append(allFrames, newFrame, axis = 0)
 					numberOfFrames = numberOfFrames + 1 
 					previousSize = file_header
 
-				if (numberOfFrames%1000==0):
+				if ((numberOfFrames % 2) == 0):
 					print("Read %d events from CRYO ASIC file" % numberOfFrames)
-				if (numberOfFrames>nevents):
-					break
+				if(nevents is not None):
+					if (numberOfFrames > nevents):
+						break
 
 			except Exception: 
 				e = sys.exc_info()[0]
