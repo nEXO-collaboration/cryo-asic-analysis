@@ -5,28 +5,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 
-#for progress bars, it depends whether one is working in
-#a jupyter notebook or on a script. if you are getting missing
-#library errors, please do the following lines to install. 
-#pip install tqdm ipywidgets; 
-#jupyter nbextension enable --py widgetsnbextension;
-from IPython import get_ipython
-def isnotebook():
-	try:
-		shell = get_ipython().__class__.__name__
-		if shell == 'ZMQInteractiveShell':
-			return True   # Jupyter notebook or qtconsole
-		elif shell == 'TerminalInteractiveShell':
-			return False  # Terminal running IPython
-		else:
-			return False  # Other type (?)
-	except NameError:
-		return False      # Probably standard Python interpreter
-if(isnotebook()):
-	from tqdm.notebook import tqdm
-else:
-	from tqdm import tqdm
-
 
 class CryoAsicFile:
 	#filename - path/to/datafile.dat, an output datafile from CRYOASIC software
@@ -105,12 +83,12 @@ class CryoAsicFile:
 
 		else:
 			if(nevents is None):
-				looper = tqdm(range(numberOfFrames), desc='descrambling event data')
+				looper = range(numberOfFrames)
 			else:
 				if(nevents >= numberOfFrames):
-					looper = tqdm(range(numberOfFrames), desc='descrambling event data')
+					looper = range(numberOfFrames)
 				else:
-					looper = tqdm(range(int(nevents)), desc='descrambling event data')
+					looper = range(int(nevents))
 
 			for i in looper:
 				currentRawData = allFrames[i, :]
@@ -192,8 +170,7 @@ class CryoAsicFile:
 		#(to save time in case of large data files). Check the line in the __init__ of this class.
 
 		#start parsing events.
-		looper = tqdm(self.events, desc='Adding waveforms to pandas dataframe') 
-		for ev in looper:
+		for ev in self.events:
 			ev_ser = pd.Series()
 			channels = []
 			channel_types = []

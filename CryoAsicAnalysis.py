@@ -10,29 +10,6 @@ from scipy import signal
 
 
 
-#for progress bars, it depends whether one is working in
-#a jupyter notebook or on a script. if you are getting missing
-#library errors, please do the following lines to install. 
-#pip install tqdm ipywidgets; 
-#jupyter nbextension enable --py widgetsnbextension;
-from IPython import get_ipython
-def isnotebook():
-	try:
-		shell = get_ipython().__class__.__name__
-		if shell == 'ZMQInteractiveShell':
-			return True   # Jupyter notebook or qtconsole
-		elif shell == 'TerminalInteractiveShell':
-			return False  # Terminal running IPython
-		else:
-			return False  # Other type (?)
-	except NameError:
-		return False      # Probably standard Python interpreter
-if(isnotebook()):
-	from tqdm.notebook import tqdm
-else:
-	from tqdm import tqdm
-
-
 
 class CryoAsicAnalysis:
 	#takes a "config" dict which has analysis and data parameters
@@ -85,8 +62,6 @@ class CryoAsicAnalysis:
 		ENC = ADC*(1.2/2**12)*(Q_Max[Gain]/V_Max[Gain][pt])/1.6e-19
 		return ENC
 
-
-
 	#given a time, return the closest sample index (int)
 	def time_to_sample(self, t):
 		idx = (np.abs(np.asarray(self.times) - t)).argmin()
@@ -118,8 +93,6 @@ class CryoAsicAnalysis:
 
 		return evdf
 
-
-
 	#strips and dummy capacitors are populated
 	#on these boards. this function will tell if
 	#if it is strip or cap
@@ -133,6 +106,22 @@ class CryoAsicAnalysis:
 			return False
 
 
+	#this is a pretty temporary function, because
+	#i am soon going to completely restructure the 
+	#way the channel mapping is done. But for now,
+	#it returns the type and position of the strip
+	def get_strip_position(self, ch):
+		if(not self.is_channel_strip(ch)):
+			return None, None 
+		chs = self.df["Channels"].iloc[0]
+		chidx = chs.index(ch)
+		p = self.df["ChannelPositions"].iloc[0]
+		thisch_pos = p[chidx]
+		t = self.df["ChannelTypes"].iloc[0]
+		thisch_type = t[chidx]
+		return thisch_type, thisch_pos
+
+
 
 	#for the moment, we will baseline subtract based
 	#on an input window 
@@ -142,8 +131,7 @@ class CryoAsicAnalysis:
 		index_range = [self.time_to_sample(self.config["baseline"][0]), self.time_to_sample(self.config["baseline"][1])]
 
 		#baseline subtract all events
-		looper = tqdm(self.df.iterrows(), total=len(self.df.index))
-		for i, row in looper:
+		for i, row in self.df.iterrows():
 			waves = row["Data"]
 			for ch in range(len(waves)):
 				base = np.mean(waves[ch][index_range[0]:index_range[1]])
@@ -220,9 +208,8 @@ class CryoAsicAnalysis:
 
 		chs = self.df.iloc[0]["Channels"]
 		nevents = len(self.df.index) #looping through all events
-		looper = tqdm(chs, desc="Calculating avg PSD on channel...")
 
-		for ch in looper:
+		for ch in chs:
 			pxx_tot = None
 			freqs = None
 			avg_event_counter = 0 #number of events over which the avg is calculated
@@ -269,9 +256,8 @@ class CryoAsicAnalysis:
 	def calculate_stds(self, window=[0,-1]):
 		chs = self.df.iloc[0]["Channels"]
 		nevents = len(self.df.index) #looping through all events
-		looper = tqdm(chs, desc="Calculating stds on each channel...")
 
-		for ch in looper:
+		for ch in chs:
 			if(ch == self.config["key_channel"]):
 				continue
 			all_samples = []
@@ -280,28 +266,9 @@ class CryoAsicAnalysis:
 				wave = list(ev["Data"][ch][window[0]:window[1]]) #ADC counts
 				all_samples = all_samples + wave
 
-			def gausfit(x, a, b, c):
-				return a*np.exp(-(x - c)**2/(2*b**2))
+			self.noise_df.at[ch, "STD"] = np.std(all_samples)
+			self.noise_df.at[ch, "Channel"] = ch
 
-			#estimate of mean, std, and amp
-			binwidth=0.5 #ADC counts
-			bins = np.arange(min(all_samples), max(all_samples))
-			n, bins = np.histogram(all_samples, bins, density=1)
-			bc = (bins[:-1] + bins[1:])/2
-			guess = [max(n), np.std(all_samples), np.median(all_samples)]
-			try:
-				popt, pcov = curve_fit(gausfit, bc, n, p0=guess)
-				self.noise_df["STD"].iloc[ch] = popt[1] #ADC counts
-			except:
-				print("Fit failed..., just doing regular std")
-				self.noise_df["STD"].iloc[ch] = np.std(all_samples)
-
-			"""		
-			fig, ax = plt.subplots(figsize=(8, 5))
-			ax.hist(all_samples, bins, density=1)
-			#ax.plot(bc, gausfit(bc, *popt))
-			plt.show()
-			"""
 
 	def plot_stds(self):
 
@@ -327,7 +294,54 @@ class CryoAsicAnalysis:
 
 
 
+	def plot_stds_strip_position(self, show=True):
+		if(len(self.noise_df.index) == 0):
+			print("No STD information present. Generating now:")
+			self.calculate_stds()
 
+		
+		xstrips = {"pos": [], "std": []}
+		ystrips = {"pos": [], "std": []}
+		caps = {"pos": [], "std": []}
+		for i, row in self.noise_df.iterrows():
+			ch = row["Channel"]
+			if(ch in self.config["dead_channels"]):
+				continue
+			if(self.is_channel_strip(ch)):
+				chtype, chpos = self.get_strip_position(ch)
+				if(chtype == "X"):
+					xstrips["pos"].append(chpos[1])
+					xstrips["std"].append(row["STD"])
+				elif(chtype == "Y"):
+					ystrips["pos"].append(chpos[0])
+					ystrips["std"].append(row["STD"])
+			else:
+				if(len(caps["pos"]) == 0):
+					caps["pos"].append(0)
+				else:
+					caps["pos"].append(caps["pos"][-1]+1)
+				caps["std"].append(row["STD"])
+		
+		fig, ax = plt.subplots()
+		axENC = ax.twinx()
+		ax.scatter(xstrips["pos"], xstrips["std"], label="X Strips", s=100)
+		ax.scatter(ystrips["pos"], ystrips["std"], label="Y Strips", s=100)
+		ax.scatter(caps["pos"], caps["std"], label="Caps", s=100)
+		ax.set_xlabel("Strip Position [mm]")
+		ax.set_ylabel("STD [ADC]")
+		ENCLim = self.ADC_to_ENC(ax.get_ylim(), self.config["gain"], self.config["pt"])
+		axENC.set_ylim(ENCLim[0], ENCLim[1])
+		axENC.set_ylabel("ENC [e^-]")
+		ax.grid(False)
+		axENC.grid(False)
+		ax.legend()
+
+		if(show):
+			plt.show()
+
+		return fig, ax, axENC 
+
+				
 
 
 
@@ -347,9 +361,8 @@ class CryoAsicAnalysis:
 		img_full = np.zeros((len(chs), len(chs)))
 		img_lags = np.zeros((len(chs), len(chs)))
 		event_count = 0
-		looper = tqdm(range(nevents), desc="Calculating cross correlation matrix")
 		skip_event = False #flag to skip events if there is a glitch
-		for evno in looper:
+		for evno in range(nevents):
 			img = np.zeros((len(chs), len(chs)))
 			for i in range(len(chs)):
 				#zero out dead channels

@@ -23,7 +23,7 @@ class CryoAsicEventViewer:
 
 		self.nevents_total = len(self.df.index)
 
-		self.sf = 2 #MHz "sf": sampling_frequency
+		self.sf = config["sampling_rate"] #MHz "sf": sampling_frequency
 		self.dT = 1.0/self.sf
 		self.config = config
 
