@@ -44,6 +44,7 @@ class CryoAsicAnalysis:
 		self.dT = 1.0/self.sf
 		self.nsamples = len(self.df.iloc[0]["Data"][0])
 		self.times = np.arange(0, self.nsamples*self.dT, self.dT)
+		self.live_time = self.nsamples*self.dT
 
 
 		self.noise_df = pd.DataFrame(columns=["Channel", "Freqs", "PSD", "STD"]) #rows are channels, columns are noise information
@@ -203,7 +204,7 @@ class CryoAsicAnalysis:
 	#overlayed, but with traces shifted relative to eachother by 
 	#some number of ADC counts. if tileno is not none, it only plots
 	#one tile, associated with an integer passed as argument
-	def plot_waves(self, evno, chs_to_plot = []):
+	def plot_waves(self, evno, chs_to_plot = [], window = [ ], title =" "):
 		if(evno < 0):
 			evno = 0
 		if(evno > self.nevents_total):
@@ -229,6 +230,9 @@ class CryoAsicAnalysis:
 		for i in range(nch):
 			if(i in chs_to_plot):
 				ax.plot(times, waves[i] + curshift, label=str(chs[i]))
+				ax.set_title(title)
+				if window:
+					ax.set_xlim(window[0], window[1])
 			#curshift += adc_shift
 
 		ax.set_xlabel('time (us)')
@@ -426,6 +430,33 @@ class CryoAsicAnalysis:
 		
 		glitch_rate = glitch_count/total_time
 		return glitch_rate
+	
+	def event_finder(self, thresh = 3, show = True, window = 50):
+		
+		chs = sorted(self.df.iloc[0]["Channels"])
+		nevents = len(self.df.index)
+		self.evt_count = 0
+		self.evt_rate = 0
+
+		for evt in range(nevents):
+			for ch in chs:
+				
+				WVFM = self.get_wave(evt, ch)
+				sigma = np.std(WVFM)
+				datapoints = np.where(np.any(WVFM>=thresh*sigma))[0]
+				print(datapoints)
+				continue
+				for location in datapoints:
+					if (location<20): continue  
+					if WVFM[datapoints - 1] <= thresh/1.5: continue
+					self.evt_count += 1
+					if show:
+						self.plot_waves(evt, window = [location - window, location + window], title="Candidate Event in Frame {0}".format(evt))
+
+				
+		self.evt_rate = self.evt_count/(self.live_time*1e-6)
+		self.evt_rate_error = np.sqrt(self.evt_count)/(self.live_time*1e-6)
+
 
 
 ############################################################################################
