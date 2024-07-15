@@ -1,0 +1,13 @@
+Begining Conversion
+False
+Starting .dat file name loop
+Conversion Complete
+Begining Conversion
+False
+Starting .dat file name loop
+Conversion Complete
+Begining Conversion
+Traceback (most recent call last):
+  File "/p/lustre2/glenrich/Mock_Charge_Module_Analysis/cryo-asic-analysis/submission_scripts/python/Convert_to_Pickle.py", line 42, in <module>
+    print("Data path is {0}".foramt(data_path))
+AttributeError: 'str' object has no attribute 'foramt'
