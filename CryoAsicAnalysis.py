@@ -9,6 +9,11 @@ import pandas as pd
 from scipy.signal import periodogram
 from scipy.optimize import curve_fit
 from matplotlib.colors import LogNorm
+import matplotlib.cm as cm
+import matplotlib.patches as patches
+import matplotlib.path as mpath
+import matplotlib.transforms as transforms
+from matplotlib.ticker import ScalarFormatter
 from scipy import signal
 
 
@@ -752,31 +757,110 @@ class CryoAsicAnalysis:
 	
 
 	def plot_tile(self, evno, time=None, window = 10):
-		ev = self.create_df_from_event(evno)
-		evdf = self.create_df_from_event(evno)
-		
-		if time is None:
-			max = 0
-			max_channel = 0
-			for channel in evdf["Channel"]:
-				if np.max(evdf["Data"][channel]) > max:
-					max = np.max(evdf["Data"][channel])
-					max_channel = channel
-			time = np.argmax(evdf["Data"][max_channel])
 
+		evdf = self.create_df_from_event(evno)
+
+		pitch = 6
+		min = 2**16
+		max = 0
+
+		if time is None:
+			for WVFM in evdf["Data"]:
+				if np.max(WVFM) > max:
+					max = np.max(WVFM)
+			time = np.argmax(WVFM)
+
+		else:
+			for WVFM in evdf["Data"]:
+				if np.max(WVFM[time-window:time+window]) > max:
+					max = np.max(WVFM[time-window:time+window])
+
+		for WVFM in evdf["Data"]:
+			if np.max(WVFM[time-window:time+window]) < min: min = np.max(WVFM[time-window:time+window])
+
+		fig, ax = plt.subplots()
+
+		strip_trace = [
+			mpath.Path.MOVETO,
+			mpath.Path.LINETO,
+			mpath.Path.LINETO,
+			mpath.Path.LINETO,
+			mpath.Path.CLOSEPOLY
+		]
+
+		for channel in evdf["Channel"]:
+			type = self.get_channel_type(channel)
+			if type == "dummy": continue
+			
+			channel_max = np.max((evdf["Data"][channel])[time-window:time+window])
+			channel_amp = (channel_max-min)/(max-min)
+
+			if type == "x":
+				pos = self.get_channel_pos(channel)[1]
+				strip_verticies = [
+					(-45, pos),
+					(-45+pitch/2, pos+pitch/2),
+					(-45+pitch, pos),
+					(-45+pitch/2, pos-pitch/2),
+					(-45, pos)
+				]
+
+				strip_path = mpath.Path(strip_verticies, strip_trace)
+				
+				for i in range(15):
+					strip_patch = patches.PathPatch(strip_path, facecolor=cm.jet(channel_amp), edgecolor='black')
+					ax.add_patch(strip_patch)
+					transform = transforms.Affine2D().translate(i*pitch,0) + ax.transData
+					strip_patch.set_transform(transform)
+			
+			if type == "y":
+				pos = self.get_channel_pos(channel)[0]
+				
+				strip_verticies = [
+					(pos, -45),
+					(pos+pitch/2, -45+pitch/2),
+					(pos, -45+pitch),
+					(pos-pitch/2, -45+pitch/2),
+					(pos, -45)
+				]
+
+
+				strip_path = mpath.Path(strip_verticies, strip_trace)
+				
+				for i in range(15):
+					strip_patch = patches.PathPatch(strip_path, facecolor=cm.jet(channel_amp), edgecolor='black')
+					ax.add_patch(strip_patch)
+					transform = transforms.Affine2D().translate(0,i*pitch) + ax.transData
+					strip_patch.set_transform(transform)
+
+		cmap = plt.get_cmap('jet')
+		norm = plt.Normalize(min, max)
+		sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+		sm.set_array([])
+		cbar = plt.colorbar(sm, ax=ax, boundaries = np.linspace(round(min),round(max),1000))
+		cbar.set_label("Maximum Current [$e^-$/$\mu$s]")
+		cbar.ax.yaxis.set_major_formatter(ScalarFormatter(useOffset=False))
+		cbar.ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: '{:d}'.format(int(x))))
+		
+		ax.grid("False")
+		ax.set_title("Charge Tile for Event {0} at Time {1} us".format(evno, time))
+		ax.set_xlim(-50,50)
+		ax.set_ylim(-50,50)
+		plt.show()
+
+		"""
 		plt.figure()
 		for channel in evdf["Channel"]:
 			type = self.get_channel_type(channel)
 			if type == "dummy": continue
 			channel_max = np.max((evdf["Data"][channel])[time-window:time+window])
+			channel_amp = np.log(1+(channel_max-min)/(max-min))
 			if type == "x":
-				plt.fill_between([-2,-1,0,1,2],[0,0,0,0,0],[10,10,10,10,10])
-				#plt.fill_between([evdf["ChannelPos"][channel]+6],[0],[40], alpha=np.max((evdf["Data"][channel])[time-window:time+window])/max)
+				plt.fill_between([-45, 45],[self.get_channel_pos(channel)[1] - pitch],[self.get_channel_pos(channel)[0] + pitch], color = cm.hot(channel_amp), alpha = channel_amp)
 			elif type == "y":
-				plt.vlines(5,0,10)
-				#plt.fill_between([0,40],[evdf["ChannelPos"][channel]], [evdf["ChannelPos"][channel]+6], alpha=np.max((evdf["Data"][channel])[time-window:time+window])/max)
+				plt.fill_between([self.get_channel_pos(channel)[0] - pitch, self.get_channel_pos(channel)[0] + pitch], [-45], [45], alpha = channel_amp, color = 'red')
 		plt.show()
-		
+		"""
 
 
 		
