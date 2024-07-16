@@ -431,7 +431,7 @@ class CryoAsicAnalysis:
 		glitch_rate = glitch_count/total_time
 		return glitch_rate
 	
-	def event_finder(self, thresh = 150, show = True, window = 50):
+	def event_finder(self, thresh = 1.5, show = True, window = 50):
 		
 		chs = sorted(self.df.iloc[0]["Channels"])
 		nevents = len(self.df.index)
@@ -442,13 +442,14 @@ class CryoAsicAnalysis:
 
 		for evt in range(nevents):
 			for ch in chs:
-				
+				if not self.is_channel_strip(ch): continue
 				WVFM = self.get_wave(evt, ch)
+				if ch ==1: time = len(WVFM * self.dT)
 				sigma = np.std(WVFM)
-				datapoints = np.where(WVFM>=(np.mean(WVFM)+thresh))[0]
+				datapoints = np.where(WVFM>=(sigma*thresh))[0]
 				for location in datapoints:
 					if ((location>10) and (location<20)) or ((location >1000) and (location<1020)): continue  
-					if any(abs(time-location) <= 10 for time in self.evt_times): continue
+					#if any(abs(time-location) <= 10 for time in self.evt_times): continue
 					if WVFM[location - 1] <= thresh*sigma/1.5: continue
 					self.evt_count += 1
 					self.evt_times.append(location)
