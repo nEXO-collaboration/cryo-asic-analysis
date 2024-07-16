@@ -9,6 +9,11 @@ import pandas as pd
 from scipy.signal import periodogram
 from scipy.optimize import curve_fit
 from matplotlib.colors import LogNorm
+import matplotlib.cm as cm
+import matplotlib.patches as patches
+import matplotlib.path as mpath
+import matplotlib.transforms as transforms
+from matplotlib.ticker import ScalarFormatter
 from scipy import signal
 
 
@@ -44,6 +49,7 @@ class CryoAsicAnalysis:
 		self.dT = 1.0/self.sf
 		self.nsamples = len(self.df.iloc[0]["Data"][0])
 		self.times = np.arange(0, self.nsamples*self.dT, self.dT)
+		self.live_time = self.nsamples*self.dT
 
 
 		self.noise_df = pd.DataFrame(columns=["Channel", "Freqs", "PSD", "STD"]) #rows are channels, columns are noise information
@@ -203,7 +209,7 @@ class CryoAsicAnalysis:
 	#overlayed, but with traces shifted relative to eachother by 
 	#some number of ADC counts. if tileno is not none, it only plots
 	#one tile, associated with an integer passed as argument
-	def plot_waves(self, evno, chs_to_plot = []):
+	def plot_waves(self, evno, chs_to_plot = [], window = [ ], title =" ", ENC = False):
 		if(evno < 0):
 			evno = 0
 		if(evno > self.nevents_total):
@@ -228,11 +234,16 @@ class CryoAsicAnalysis:
 		curshift = 0
 		for i in range(nch):
 			if(i in chs_to_plot):
-				ax.plot(times, waves[i] + curshift, label=str(chs[i]))
+				if ENC: ax.plot(times, self.ADC_to_ENC(waves[i] + curshift), label=str(chs[i]))
+				else: ax.plot(times, waves[i] + curshift, label=str(chs[i]))
+				ax.set_title(title)
+				if window:
+					ax.set_xlim(window[0], window[1])
 			#curshift += adc_shift
 
-		ax.set_xlabel('time (us)')
-		ax.set_ylabel("channel shifted adc counts")
+		ax.set_xlabel('Time (us)')
+		if ENC: ax.set_ylabel("Channel Shifted ENC ($e^-$)")
+		else: ax.set_ylabel("Channel Shift ADC Counts")
 
 
 		plt.show()
@@ -426,8 +437,37 @@ class CryoAsicAnalysis:
 		
 		glitch_rate = glitch_count/total_time
 		return glitch_rate
+	
+	def event_finder(self, thresh = 2, show = True, window = 50):
+		
+		chs = sorted(self.df.iloc[0]["Channels"])
+		nevents = len(self.df.index)
+		self.evt_count = 0
+		self.evt_rate = 0
 
+		strip_channels = []
+		for evt in range(nevents):
+			evt_times = []
+			for ch in chs:
+				if not self.is_channel_strip(ch): continue
+				WVFM = self.get_wave(evt, ch)
+				if ch ==1: time = len(WVFM * self.dT)
+				sigma = np.std(WVFM)
+				datapoints = np.where(WVFM>=(sigma*thresh))[0]
+				datapoints = np.where(WVFM>=(sigma*thresh))[0]
+				for location in datapoints:
+					if ((location>10) and (location<20)) or ((location >1000) and (location<1020)): continue  
+					#if any(abs(time-location) <= 10 for time in self.evt_times): continue
+					if WVFM[location - 1] <= thresh*sigma/1.5: continue
+					self.evt_count += 1
+					evt_times.append(location)
+					if show:
+						self.plot_waves(evt, chs_to_plot = strip_channels, window = [location - window, location + window], title="Candidate Event in Frame {0}".format(evt), ENC = True)
 
+		self.evt_rate = self.evt_count/(self.live_time*1e-6)
+		self.evt_rate_error = np.sqrt(self.evt_count)/(self.live_time*1e-6)
+
+	
 ############################################################################################
 # Event viewer functions
 ############################################################################################
@@ -714,6 +754,37 @@ class CryoAsicAnalysis:
 			plt.show()
 
 		return fig, ax
+	
+
+	def plot_tile(self, evno, time=None, window = 10):
+
+		evdf = self.create_df_from_event(evno)
+		
+		if time is None:
+			max = 0
+			max_channel = 0
+			for channel in evdf["Channel"]:
+				if np.max(evdf["Data"][channel]) > max:
+					max = np.max(evdf["Data"][channel])
+					max_channel = channel
+			time = np.argmax(evdf["Data"][max_channel])
+
+		plt.figure()
+		for channel in evdf["Channel"]:
+			type = self.get_channel_type(channel)
+			if type == "dummy": continue
+			
+			channel_max = np.max((evdf["Data"][channel])[time-window:time+window])
+			if type == "x":
+				plt.fill_between([-2,-1,0,1,2],[0,0,0,0,0],[10,10,10,10,10])
+				#plt.fill_between([evdf["ChannelPos"][channel]+6],[0],[40], alpha=np.max((evdf["Data"][channel])[time-window:time+window])/max)
+			elif type == "y":
+				plt.vlines(5,0,10)
+				#plt.fill_between([0,40],[evdf["ChannelPos"][channel]], [evdf["ChannelPos"][channel]+6], alpha=np.max((evdf["Data"][channel])[time-window:time+window])/max)
+		plt.show()
+		
+
+
 		
 	
 	def plot_event_ch(self, evno, ch, ax = None, show=True):
