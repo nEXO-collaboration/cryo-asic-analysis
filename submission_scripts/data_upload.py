@@ -53,11 +53,11 @@ def Delete_Files(buffer_directory, sanity_check_dir, kill_time, counter, pardon_
 
 def main(upload_rate, message_rate, kill_time):
 
-    source_directory = '/media/asicdaq/02a27d49-74c8-4298-88e1-d96ac453d3dd/cryoasic/LXe_Run1/Radon_Data_7_12_24' # Don't include the trailing / here so that rsync copies the full directory and not just the files inside
+    source_directory = '/media/asicdaq/02a27d49-74c8-4298-88e1-d96ac453d3dd/cryoasic/LXe_Run1/Gamma_Data_Post_Surgery_7_15_24' # Don't include the trailing / here so that rsync copies the full directory and not just the files inside
     sanity_directory = '/media/asicdaq/02a27d49-74c8-4298-88e1-d96ac453d3dd/cryoasic/LXe_Run1/Saved_Data' # Pardon function assumes there's no trailing / for consistancy
     
-    target_borax = 'glenrich@borax.llnl.gov:/p/lustre2/nexouser/data/StanfordData/ChargeModule/LXe_Run1' # Use trailing / here to create the directoy the first transfer
-    target_slac = 'glenn96@s3dflogin.slac.stanford.edu:/sdf/group/exo/ChargeModule2024/LXe_Run1'
+    target_borax = 'glenrich@borax.llnl.gov:/p/lustre1/nexouser/data/StanfordData/ChargeModule/LXe_Run1/' # Use trailing / here to create the directoy the first transfer
+    target_slac = 'glenn96@s3dflogin.slac.stanford.edu:/sdf/group/exo/ChargeModule2024/LXe_Run1/'
 
     # Checking if pardon counter has been created yet - only excepts on first pass
     try: counter
