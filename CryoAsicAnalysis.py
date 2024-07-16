@@ -204,7 +204,7 @@ class CryoAsicAnalysis:
 	#overlayed, but with traces shifted relative to eachother by 
 	#some number of ADC counts. if tileno is not none, it only plots
 	#one tile, associated with an integer passed as argument
-	def plot_waves(self, evno, chs_to_plot = [], window = [ ], title =" "):
+	def plot_waves(self, evno, chs_to_plot = [], window = [ ], title =" ", ENC = False):
 		if(evno < 0):
 			evno = 0
 		if(evno > self.nevents_total):
@@ -229,14 +229,16 @@ class CryoAsicAnalysis:
 		curshift = 0
 		for i in range(nch):
 			if(i in chs_to_plot):
-				ax.plot(times, waves[i] + curshift, label=str(chs[i]))
+				if ENC: ax.plot(times, self.ADC_to_ENC(waves[i] + curshift), label=str(chs[i]))
+				else: ax.plot(times, waves[i] + curshift, label=str(chs[i]))
 				ax.set_title(title)
 				if window:
 					ax.set_xlim(window[0], window[1])
 			#curshift += adc_shift
 
-		ax.set_xlabel('time (us)')
-		ax.set_ylabel("channel shifted adc counts")
+		ax.set_xlabel('Time (us)')
+		if ENC: ax.set_ylabel("Channel Shifted ENC ($e^-$)")
+		else: ax.set_ylabel("Channel Shift ADC Counts")
 
 
 		plt.show()
@@ -431,54 +433,35 @@ class CryoAsicAnalysis:
 		glitch_rate = glitch_count/total_time
 		return glitch_rate
 	
-	def event_finder(self, thresh = 150, show = True, window = 50):
+	def event_finder(self, thresh = 2, show = True, window = 50):
 		
 		chs = sorted(self.df.iloc[0]["Channels"])
 		nevents = len(self.df.index)
 		self.evt_count = 0
 		self.evt_rate = 0
 
-		self.evt_times = []
-
+		strip_channels = []
 		for evt in range(nevents):
+			evt_times = []
 			for ch in chs:
-				
+				if not self.is_channel_strip(ch): continue
+				if ch not in strip_channels: strip_channels.append(ch)
 				WVFM = self.get_wave(evt, ch)
+				WVFM -= np.mean(WVFM)
 				sigma = np.std(WVFM)
-				datapoints = np.where(WVFM>=(np.mean(WVFM)+thresh))[0]
+				datapoints = np.where(WVFM>=(sigma*thresh))[0]
 				for location in datapoints:
-					if ((location>10) and (location<20)) or ((location >1000) and (location<1020)): continue  
-					if any(abs(time-location) <= 10 for time in self.evt_times): continue
+					if ((location>10) and (location<20)) or ((location>1000) and (location<1020)): continue  
+					if any(abs(time-location) <= 10 for time in evt_times): continue
 					if WVFM[location - 1] <= thresh*sigma/1.5: continue
 					self.evt_count += 1
-					self.evt_times.append(location)
+					evt_times.append(location)
 					if show:
-						self.plot_waves(evt, window = [location - window, location + window], title="Candidate Event in Frame {0}".format(evt))
+						self.plot_waves(evt, chs_to_plot = strip_channels, window = [location - window, location + window], title="Candidate Event in Frame {0}".format(evt), ENC = True)
 
-		
 		self.evt_rate = self.evt_count/(self.live_time*1e-6)
 		self.evt_rate_error = np.sqrt(self.evt_count)/(self.live_time*1e-6)
 
-
-	def EventFinder(self, thresh=120 , show = True, window = 100,):
-		
-		self.event_count = 0
-		time = 0
-
-		for event in range(len(self.df.index)):
-			for channel in sorted(self.df.iloc[0]["Channels"]):
-				try: WVFM = self.get_wave(event, channel)
-				except: continue
-				if channel == 1: time += len(WVFM)
-				WVFM -= np.mean(WVFM)
-				if np.any(WVFM >= thresh):
-					locations = np.where(WVFM >= thresh)[0]
-					for datapoint in locations:
-						if (datapoint > 1000) and (datapoint < 1020): continue
-						if (WVFM[datapoint-1] > thresh/1.5):
-							self.event_count += 1
-							if show: self.plot_waves(event, window = [datapoint - window, datapoint + window], title = "Candidate Event in Frame {0}".format(event))
-							break
 	
 ############################################################################################
 # Event viewer functions
