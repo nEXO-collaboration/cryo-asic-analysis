@@ -138,6 +138,8 @@ class CryoAsicAnalysis:
 			print("Asic {:d} not found in the configuration file channel map".format(asic))
 			return None
 
+	#FYI - for other calculations. 
+	#(x1, x1.5, x3, x6) is {1: 9.6, 1.5: 14.3, 3:28.6, 6:57.2} mV/fC
 	@np.vectorize
 	def ADC_to_ENC(ADC, Gain=6, pt=1.2):
 
@@ -373,11 +375,33 @@ class CryoAsicAnalysis:
 			temp_pulses = self.find_pulses_in_channel(evno, ch, n_sigma)
 			pulses = pulses + temp_pulses
 		return pulses
+	
+
+	#given a channel and an event number, remove the samples
+	#that contain any sort of glitch or pulse found by a pulsefinder. 
+	def remove_pulses_in_wave(self, evno, ch, n_sigma=None):
+		wave = self.get_wave(evno, ch)
+		pulses = self.find_pulses_in_channel(evno, ch, n_sigma)
+		indices_to_delete = []
+		for p in pulses:
+			if(len(p["index"]) == 1):
+				indices_to_delete.append(p["index"][0])
+			else:
+				indices_to_delete = indices_to_delete + list(range(p["index"][0], p["index"][1]+1))
+		
+		if(len(wave) in indices_to_delete):
+			indices_to_delete.remove(len(wave))
+		
+		wave = np.delete(wave, indices_to_delete)
+		times = np.delete(self.times, indices_to_delete)
+		return wave, times
 
 	#Performs a pulse finding algorithm
 	#to find any peaks above a threshold, then 
 	#performs a periodogram with the Lomb-Scargle algorithm which
-	#is robust to unevenly sampled data.
+	#is robust to unevenly sampled data. This function is about 
+	#10x slower than the regular PSD function. I would suggest not
+	#using it unless you are really sure it matters. 
 	def calculate_avg_psds_ignore_pulses(self):
 		self.load_config(self.configfile_or_dict)
 		self.baseline_subtract() #baseline subtract all events
@@ -502,8 +526,10 @@ class CryoAsicAnalysis:
 				s["Channel"] = ch 
 				self.noise_df = pd.concat([self.noise_df, s.to_frame().transpose()], ignore_index=True)
 
-
-	def calculate_stds(self, window=[0,-1]):
+	#calculates the standard deviation of all samples in a dataset for
+	#each channel. It also rejects any glitches (single sample) or pulses
+	#on the waveform by performing the pulse finding algorithm and removing samples. 
+	def calculate_stds(self, pulse_reject=True):
 		chs = self.df.iloc[0]["Channels"]
 		nevents = len(self.df.index) #looping through all events
 
@@ -512,13 +538,16 @@ class CryoAsicAnalysis:
 				continue
 			all_samples = []
 			for i in range(nevents):
-				ev = self.df.iloc[i]
-				wave = list(ev["Data"][ch][window[0]:window[1]]) #ADC counts
+				if(pulse_reject):
+					wave, _ = self.remove_pulses_in_wave(i, ch)
+					wave = list(wave)
+				else:
+					wave = list(self.get_wave(i, ch))
+
 				all_samples = all_samples + wave
 
 			self.noise_df.at[ch, "STD"] = np.std(all_samples)
 			self.noise_df.at[ch, "Channel"] = ch
-
 
 
 	#calculates the "correlation matrix" 
@@ -754,6 +783,8 @@ class CryoAsicAnalysis:
 		dead_xpos = [] #dead channel positions
 		dead_ypos = [] #dead channel positions
 		ch_idx = 0
+		max_stdx = 0
+		max_stdy = 0 #used to set color scale
 		for i, row in xdf.iterrows():
 			xpos.append(row["ChannelPos"][1])
 			#is it a dead channel
@@ -765,8 +796,12 @@ class CryoAsicAnalysis:
 		for i, row in xdf.iterrows():
 			wave = row["Data"]
 			ch_idx = xpos.index(row["ChannelPos"][1])
+			if(np.std(wave) > max_stdx):
+					max_stdx = np.std(wave)
 			for j in range(len(wave)):
 				xstrip_img[ch_idx][j] = wave[j]
+				
+
 
 
 		for i, row in ydf.iterrows():
@@ -780,31 +815,35 @@ class CryoAsicAnalysis:
 		for i, row in ydf.iterrows():
 			wave = row["Data"]
 			ch_idx = ypos.index(row["ChannelPos"][0])
+			if(np.std(wave) > max_stdy):
+					max_stdy = np.std(wave)
 			for j in range(len(wave)):
 				ystrip_img[ch_idx][j] = wave[j]
-
+				
 		if(ax is None):
 			fig, ax = plt.subplots(figsize=(12,16), nrows = 2)
 
 		xheat = ax[0].imshow(xstrip_img, cmap='viridis', interpolation='none',\
 			extent=[ min(times), max(times), max(xpos), min(xpos) - self.chmap[0]["strip_pitch"]],\
-			aspect=0.5*(max(times)/(max(xpos) - min(xpos))))
+			aspect=0.5*(max(times)/(max(xpos) - min(xpos))), vmin=-2*max_stdx, vmax=2*max_stdx)
 
 		yheat = ax[1].imshow(ystrip_img, cmap='viridis', interpolation='none',\
 			extent=[min(times), max(times), max(ypos), min(ypos) - self.chmap[0]["strip_pitch"]],\
-			aspect=0.5*(max(times)/(max(ypos) - min(ypos))))
+			aspect=0.5*(max(times)/(max(ypos) - min(ypos))), vmin=-2*max_stdy, vmax=2*max_stdy)
 
 		xcbar = fig.colorbar(xheat, ax=ax[0])
 		xcbar.set_label("ADC counts", labelpad=3)
 		ax[0].set_xlabel("time (us)")
 		ax[0].set_ylabel("x - strip position")
 		ax[0].set_title("event number " + str(evno))
+		ax[0].grid(False)
 
 		ycbar = fig.colorbar(yheat, ax=ax[1])
 		ycbar.set_label("ADC counts", labelpad=3)
 		ax[1].set_xlabel("time (us)")
 		ax[1].set_ylabel("y - strip position")
 		ax[1].set_title("event number " + str(evno))
+		ax[1].grid(False)
 
 		#plot dead channels with lines through them
 		for p in dead_xpos:
@@ -815,7 +854,7 @@ class CryoAsicAnalysis:
 		if(show):
 			plt.show()
 
-		return fig, ax 
+		return fig, ax
 
 
 	
@@ -861,7 +900,7 @@ class CryoAsicAnalysis:
 	#overlayed, but with traces shifted relative to eachother by 
 	#some number of ADC counts. if tileno is not none, it only plots
 	#one tile, associated with an integer passed as argument
-	def plot_strips_waveforms_separated(self, evno, ax = None, show=True):
+	def plot_strips_waveforms_separated(self, evno, fmt=None, fig = None, ax = None, show=True, sep=None):
 		if(evno < 0):
 			evno = 0
 		if(evno > self.nevents_total):
@@ -913,17 +952,22 @@ class CryoAsicAnalysis:
 			for j in range(len(wave)):
 				ystrip_img[ch_idx][j] = wave[j]*self.config["mv_per_adc"]
 
-		mv_shift = 50 #number of adc counts to shift traces
+		if(sep == None):
+			mv_shift = 50 #number of adc counts to shift traces
+		else:
+			mv_shift = sep
 
 		if(ax is None):
 			fig, ax = plt.subplots(figsize=(12,16), nrows=2)
 
 		curshift = 0
+		if(fmt is None):
+			fmt = '-'
 		for i in range(len(xstrip_img)):
 			if(xchs[i] in self.config["dead_channels"] or xchs[i] == self.config["key_channel"]):
 				ax[0].plot(times, np.array(xstrip_img[i]) + curshift, 'k', label=str(xpos[i]))
 			else:
-				ax[0].plot(times, np.array(xstrip_img[i]) + curshift, label=str(xpos[i]))
+				ax[0].plot(times, np.array(xstrip_img[i]) + curshift, fmt, label=str(xpos[i]))
 			
 			curshift += mv_shift
 
@@ -932,7 +976,7 @@ class CryoAsicAnalysis:
 			if(ychs[i] in self.config["dead_channels"] or ychs[i] == self.config["key_channel"]):
 				ax[1].plot(times, np.array(ystrip_img[i]) + curshift, 'k', label=str(ypos[i]))
 			else:
-				ax[1].plot(times, np.array(ystrip_img[i]) + curshift, label=str(ypos[i]))
+				ax[1].plot(times, np.array(ystrip_img[i]) + curshift, fmt, label=str(ypos[i]))
 			
 			curshift += mv_shift
 
