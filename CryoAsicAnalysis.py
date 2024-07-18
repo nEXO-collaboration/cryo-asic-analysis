@@ -7,6 +7,7 @@ import math
 import matplotlib.pyplot as plt 
 import pandas as pd
 from scipy.signal import periodogram
+from astropy.timeseries import LombScargle
 from scipy.optimize import curve_fit
 from matplotlib.colors import LogNorm
 import matplotlib.cm as cm
@@ -15,6 +16,7 @@ import matplotlib.path as mpath
 import matplotlib.transforms as transforms
 from matplotlib.ticker import ScalarFormatter
 from scipy import signal
+from scipy.interpolate import interp1d
 
 #used in pulse finding analysis
 from operator import itemgetter
@@ -37,7 +39,7 @@ class CryoAsicAnalysis:
 			print("The input file you have provided for CryoAsicAnalysis object does not exist: " + self.infile)
 			return None
 		
-
+		self.configfile_or_dict = config
 		self.config = None #has global analysis config dictionary contents
 		self.chmap = None #has the channel and tile mappings. 
 		self.load_config(config) #loads both of the above dictionaries
@@ -372,15 +374,95 @@ class CryoAsicAnalysis:
 			pulses = pulses + temp_pulses
 		return pulses
 
+	#Performs a pulse finding algorithm
+	#to find any peaks above a threshold, then 
+	#performs a periodogram with the Lomb-Scargle algorithm which
+	#is robust to unevenly sampled data.
+	def calculate_avg_psds_ignore_pulses(self):
+		self.load_config(self.configfile_or_dict)
+		self.baseline_subtract() #baseline subtract all events
+		chs = self.df.iloc[0]["Channels"]
+		nevents = len(self.df.index) #looping through all events
+		#frequency range, to change units in the density to V^2/Hz
+		#max freq - min freq
+		freq_range = (self.sf/2.0 - 1.0/(self.dT*len(self.times)))*1e6
+		#these are used to linearly interpolate so that we can average many lists
+		#with different lengths.
+		fine_freqs = np.array(np.linspace(1.0/(self.dT*len(self.times)), self.sf/2.0, len(self.times*10)))*1e6
+		fine_freqs = fine_freqs[1:-1]
+		coarse_freqs = np.array(np.linspace(1.0/(self.dT*len(self.times)), self.sf/2.0, len(self.times)))*1e6
+		coarse_freqs = coarse_freqs[1:-1]
+		for ch in chs:
+			pxx_tot = None
+			freqs = None
+			avg_event_counter = 0 #number of events over which the avg is calculated
+			for i in range(nevents):
+				wave = self.get_wave(i, ch)
+				times = self.times
+
+				#find pulses in the waveform
+				pulses = self.find_pulses_in_channel(i, ch)
+				indices_to_delete = []
+				if(len(pulses) > 0):
+					#remove samples in the wave and a time stream associated with 
+					#the places where pulses or glitches exist. 
+					for p in pulses:
+						if(len(p["index"]) == 1):
+							indices_to_delete += p["index"]
+						else:
+							indices_to_delete = indices_to_delete + list(range(p["index"][0], p["index"][1]+1))
+				
+				if(len(wave) in indices_to_delete):
+					indices_to_delete.remove(len(wave))
+				
+				wave = np.delete(wave, indices_to_delete)
+				times = np.delete(times, indices_to_delete)
+
+				wave = [_*self.config["mv_per_adc"]/1000. for _ in wave] #putting ADC units into volts
+				
+				times = np.array(times)*1e-6 #convert to seconds for the lombscargle
+				fs, pxx = LombScargle(times, wave, normalization='psd').autopower(minimum_frequency = 1.0/(self.dT*len(self.times)*1e6), maximum_frequency = self.sf*1e6/2.0)
+				
+
+				pxx = pxx/freq_range #convert to V^2/Hz
+				#interpolate to a fine frequency range, and then
+				#go back to coarse once done averaging
+
+				pxx_fine = interp1d(fs, pxx)(fine_freqs)
+				if(pxx_tot is None):
+					pxx = interp1d(fine_freqs, pxx_fine)(coarse_freqs)
+					pxx_tot = pxx 
+				else:
+					pxx_tot_fine = np.array(interp1d(coarse_freqs, pxx_tot)(fine_freqs))
+					pxx_tot_fine = pxx_tot_fine + pxx_fine
+					pxx_tot = interp1d(fine_freqs, pxx_tot_fine)(coarse_freqs)
+					
+				avg_event_counter += 1
+
+			pxx_tot = pxx_tot/float(avg_event_counter)
+
+
+			#add to the noise dataframe. 
+			#if the row for this channel already exists, just update columns
+			if(ch in self.noise_df.index):
+				self.noise_df.at[ch,"Freqs"] = coarse_freqs
+				self.noise_df.at[ch,"PSD"] = pxx_tot
+			else:
+				s = pd.Series()
+				s["Freqs"] = coarse_freqs
+				s["PSD"] = pxx_tot
+				s["Channel"] = ch 
+				self.noise_df = pd.concat([self.noise_df, s.to_frame().transpose()], ignore_index=True)
+
+
+
 
 	#for every channel, calculate a PSD using an event-by-event
 	#calculation, averaging over all events. Save these periodogram
-	#data in a dataframe. If the mask_pulses flag is true, it does a pulse
-	#finding algorithm to find any peaks above a threshold, then 
-	#performs a periodogram with the Lomb-Scargle algorithm which
-	#is robust to unevenly sampled data.
-	def calculate_avg_psds(self, mask_pulses=False):
-
+	#data in a dataframe. 
+	def calculate_avg_psds(self):
+		self.load_config(self.configfile_or_dict)
+		self.baseline_subtract() #baseline subtract all events
 		chs = self.df.iloc[0]["Channels"]
 		nevents = len(self.df.index) #looping through all events
 
@@ -389,25 +471,20 @@ class CryoAsicAnalysis:
 			freqs = None
 			avg_event_counter = 0 #number of events over which the avg is calculated
 			for i in range(nevents):
-				ev = self.df.iloc[i]
-				wave = ev["Data"][ch]
-				#ignore events with glitches!!! note this is temporary for our early datasets.
-				#if any sample is above 50 mV, ignore the event. 
-				if("noise" in self.infile and max(wave, key=abs) > 500):
-					print("skipped event " + str(i))
-					continue
-
+				wave = self.get_wave(i, ch)
 				wave = [_*self.config["mv_per_adc"]/1000. for _ in wave] #putting ADC units into volts
 				
 				fs, pxx = periodogram(wave, self.sf*1e6)
+
 				if(pxx_tot is None):
-					pxx_tot = pxx 
+					pxx_tot = np.array(pxx)
 					freqs = fs
 				else:
-					pxx_tot = [pxx[_] + pxx_tot[_] for _ in range(len(pxx))]
+					pxx_tot = pxx_tot + np.array(pxx)
+
 				avg_event_counter += 1
 
-			pxx_tot = [_/float(avg_event_counter) for _ in pxx_tot]
+			pxx_tot = pxx_tot/float(avg_event_counter)
 
 			#the first element is 0Hz, and we have no sensitivity there
 			freqs = freqs[1:]
