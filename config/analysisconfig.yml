@@ -1,9 +1,9 @@
 chmap: ../config/channelmap.yml
-baseline: [10, 20] #in microseconds relative to the start of the event window
+baseline: [250, 500] #in microseconds relative to the start of the event window
 sampling_rate: 1 #MSPS
 gain: 6 #encoded gain integer, corresponding to something on order 30 mV/fC (check manual for accurate gains)
 pt: 1.2 #us
-pulse_threshold: 100 #mV
+pulse_threshold: 6 #in multiples of the standard deviation of baseline
 mv_per_adc: 0.439453 #mV/adc 
 #This is used to identify whether the 0-31/32-63 
 #channels have been swapped due to a high speed 
