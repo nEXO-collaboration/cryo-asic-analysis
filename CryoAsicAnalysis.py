@@ -16,6 +16,10 @@ import matplotlib.transforms as transforms
 from matplotlib.ticker import ScalarFormatter
 from scipy import signal
 
+#used in pulse finding analysis
+from operator import itemgetter
+from itertools import groupby
+
 
 
 
@@ -154,6 +158,9 @@ class CryoAsicAnalysis:
 		idx = (np.abs(np.asarray(self.times) - t)).argmin()
 		return idx 
 
+	def sample_to_time(self, idx):
+		return self.times[idx]
+
 	def save_noise_df(self):
 		pickle.dump([self.noise_df], open(self.infile[:-3]+"_noisedf.p", "wb"))
 
@@ -260,11 +267,119 @@ class CryoAsicAnalysis:
 			return ev["Data"][ch]
 		else:
 			return None
+		
+	def get_baseline_samples(self, wave):
+		#indexes of data stream to use to calculate baseline. 
+		#comes from microsecond range input from configuration dict
+		index_range = [self.time_to_sample(self.config["baseline"][0]), self.time_to_sample(self.config["baseline"][1])]
+		return wave[index_range[0]:index_range[1]]
+
+
+	#this is a general pulse finding algorithm 
+	#that uses a bipolar threshold discriminator 
+	#with a N*sigma threshold, using baseline information. 
+	#It is a prototype of what goes on in data reduction, but we need
+	#something like this fast in order to do some processing before calculating
+	#power spectral densities (pulse rejection). It assumes that all events
+	#have been baseline subtracted using the baseline subtract function. 
+	def find_pulses_in_channel(self, evno, ch, n_sigma=None):
+		wave = self.get_wave(evno, ch)
+		pulses = []
+		if(n_sigma is None):
+			n_sigma = self.config["pulse_threshold"]
+		
+		#get the standard deviation of the baseline. 
+		std = np.std(self.get_baseline_samples(wave))
+
+		#threshold is N*sigma above the baseline
+		thr = n_sigma*std 
+
+		#find all indices of samples above baseline and below baseline
+		positive_clip = np.where(wave >= thr)[0]
+		negative_clip = np.where(wave <= -thr)[0]
+
+		#at this point, we can end early if they are both empty
+		if(len(positive_clip) == 0 and len(negative_clip) == 0):
+			return pulses
+
+		for key, group in groupby(enumerate(positive_clip), lambda i: i[0] - i[1]):
+			group = list(map(itemgetter(1), group))
+			#this is the case if there are a few samples above threshold
+			if(len(group) > 1):
+				idxs = [group[0], group[-1]]
+				#find the maximum amplitude in this group
+				amp = max(wave[group])
+				#find the time of the max amplitude
+				time = float(self.sample_to_time(group[np.argmax(wave[group])]))
+				#find the index of the first sample below threshold
+				pulses.append({"channel": ch, "time": time, "index": idxs, "amplitude": amp})
+			#if its one sample long, just slightly different syntax
+			else:
+				amp = wave[group[0]]
+				time = float(self.sample_to_time(group[0]))
+				pulses.append({"channel": ch, "time": time, "index": group, "amplitude": amp})
+
+		#repeat for negative pulses
+		for key, group in groupby(enumerate(negative_clip), lambda i: i[0] - i[1]):
+			group = list(map(itemgetter(1), group))
+			#this is the case if there are a few samples above threshold
+			if(len(group) > 1):
+				idxs = [group[0], group[-1]]
+				#find the maximum amplitude in this group
+				amp = min(wave[group])
+				#find the time of the max amplitude
+				time = float(self.sample_to_time(group[np.argmin(wave[group])]))
+				#find the index of the first sample below threshold
+				pulses.append({"channel": ch, "time": time, "index": idxs, "amplitude": amp})
+			#if its one sample long, just slightly different syntax
+			else:
+				amp = wave[group[0]]
+				time = float(self.sample_to_time(group[0]))
+				pulses.append({"channel": ch, "time": time, "index": group, "amplitude": amp})
+
+		#debugging
+		"""
+		fig, ax = plt.subplots()
+		ax.plot(self.times, wave)
+		ax.axhline(thr, color='r')
+		ax.axhline(-thr, color='r')
+		print(std)
+		for pulse in pulses:
+			if(pulse["channel"] == ch):
+				ax.scatter(pulse["time"], pulse["amplitude"], color='r', s=40)
+
+		plt.show()
+		"""
+
+		return pulses
+
+	#similar to above, but just pneumonic for looping through all channels. 
+	def find_pulses_in_event(self, evno, n_sigma=None):
+		ev = self.df.iloc[evno]
+		chs = ev["Channels"]
+		if(n_sigma is None):
+			n_sigma = self.config["pulse_threshold"]
+		
+		#the output is a list of "pulse" objects, which 
+		#are dictionaries with information like:
+		#"channel": channel number
+		#"time": in microseconds of the maximum in the pulse 
+		#"index": [first crossing index, leaving threshold index] 
+		#"amplitude": in mV 
+		pulses = []  
+		for ch in chs:
+			temp_pulses = self.find_pulses_in_channel(evno, ch, n_sigma)
+			pulses = pulses + temp_pulses
+		return pulses
+
 
 	#for every channel, calculate a PSD using an event-by-event
 	#calculation, averaging over all events. Save these periodogram
-	#data in a dataframe. 
-	def calculate_avg_psds(self):
+	#data in a dataframe. If the mask_pulses flag is true, it does a pulse
+	#finding algorithm to find any peaks above a threshold, then 
+	#performs a periodogram with the Lomb-Scargle algorithm which
+	#is robust to unevenly sampled data.
+	def calculate_avg_psds(self, mask_pulses=False):
 
 		chs = self.df.iloc[0]["Channels"]
 		nevents = len(self.df.index) #looping through all events
@@ -438,6 +553,9 @@ class CryoAsicAnalysis:
 		glitch_rate = glitch_count/total_time
 		return glitch_rate
 	
+
+	#take a look at find_pulses_in_event function. This one may want
+	#to be deprecated eventually. 
 	def event_finder(self, thresh = 2, show = True, window = 50):
 		
 		chs = sorted(self.df.iloc[0]["Channels"])
