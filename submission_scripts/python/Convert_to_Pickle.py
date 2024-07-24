@@ -1,4 +1,5 @@
 import sys
+import os
 import glob
 sys.path.append("../../")
 import CryoAsicFile
@@ -22,14 +23,16 @@ def Convert_Files(data_path, pickle_path, reload_all = False):
     
     dat_name = Get_File_Name(dat)
 
-    print(dat_name)
-
     if (dat_name not in pickle_names) or (reload_all==True):
       cf = CryoAsicFile.CryoAsicFile(dat, config_filepath)
       cf.load_raw_data()
       cf.group_into_pandas()
       outfile_name = pickle_path + dat_name + '.p'
-      cf.pickle_dump_waveform_df(outfile_name)
+      try: cf.pickle_dump_waveform_df(outfile_name)
+      except:
+        os.mkdir(pickle_path)
+        cf.pickle_dump_waveform_df(outfile_name)
+
 
 
 if __name__=="__main__":
@@ -38,4 +41,4 @@ if __name__=="__main__":
   pickle_path = sys.argv[2]
   config_filepath = "../../config/analysisconfig.yml"
 
-  Convert_Files(data_path, pickle_path, True)
+  Convert_Files(data_path, pickle_path)
