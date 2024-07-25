@@ -5,7 +5,16 @@ import pickle
 
 
 class DataReduction:
-	def __init__(self, config):
+	#Config is the "analysis config" file in configs, or a dictionary
+	#that has been edited in the notebook (either filepath or dictionary of the yaml file)
+	#The input_files are actualy filenames of what you want to reduce. For example, a list
+	#from glob that selects all files with gain 6 and 1.2 pt from some directory. Full path expected.
+	
+	#The input_files can be a list with a single file, in case
+	#you have already combined your input files into one dataframed pickle file. 
+	#Otherwise, it will automatically attempt to combine the input files into a single file.
+	#This could be a place you want to change... say put that combining routine in the utilities.py 
+	def __init__(self, config, input_files):
 
 		self.configfile_or_dict = config
 		self.config = None #has global analysis config dictionary contents
@@ -27,6 +36,10 @@ class DataReduction:
 		self.reduced_df = {} 
 		self.initialize_reduced_df() #populates the reduced_df with the keys from the reduced quantities dictionary
 
+		self.waveform_df = None #this is the waveform df imported by the input files. 
+
+		self.input_files = input_files
+		
 
 	def load_config(self, config):
 		#the config input is either a path to a yaml file or a dictionary.
@@ -93,15 +106,41 @@ class DataReduction:
 
 		#done
 
-	def save_reduced_df(self, path):
+	#The path is the full path of output 
+	#The filename is the name of the file you want to save with no extensions. 
+	#It checks if the path exists and creates it if possible. 
+	def save_reduced_df(self, path, filename):
+		if(path[-1] != '/'):
+			path += '/'
+		
+		if(os.path.exists(path) == False):
+			os.makedirs(path)
+		
 		#first convert to dataframe
 		if(isinstance(self.reduced_df, dict)):
 			df = pd.DataFrame.from_dict(self.reduced_df)
-			pickle.dump([df], open(path, 'wb'))
+			pickle.dump([df], open(path+filename+".p", 'wb'))
 		else:
 			print("Somehow the self.reduced_df became something other than a dict.")
 			print("Write some handling code in save_reduced_df to handle this")
-			pickle.dump([self.reduced_df], open(path, 'wb'))
+			pickle.dump([self.reduced_df], open(path+filename+".p", 'wb'))
 
+	
+	def load_input_data(self):
+		#load the input data
+		#If the input_files is a single file, just load it. 
+		if(len(self.input_files) == 1):
+			self.waveform_df = pickle.load(open(self.input_files[0], 'rb'))[0]
 		
-			
+		#otherwise, combine the files. 
+		else:
+			#combine the dataframes from many files. 
+			full_df = None
+			for f in self.input_files:
+				temp_df = pickle.load(open(f, "rb"))[0]
+				if(full_df is None):
+					full_df = temp_df
+				else:
+					full_df = pd.concat([full_df, temp_df], ignore_index=True)
+			self.waveform_df = full_df
+		
