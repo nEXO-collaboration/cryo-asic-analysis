@@ -12,3 +12,5 @@ class Cluster:
         #defines RQs. 
         for key in self.rqs:
             self.d[key] = self.rqs[key]
+
+    

@@ -17,7 +17,10 @@ pt: 2.4 #us
 #analysis and reduction based quantities
 baseline: [250, 500] #in microseconds relative to the start of the event window
 pulse_threshold: 6 #in multiples of the standard deviation of baseline. Default, can be overridden as an argument in reduction routines. 
-mv_per_adc: 0.439453 #mV/adc 
+mv_per_adc: 0.439453 #mV/adc, this should be phased out eventually, as mV is not a totally useful unit 
+#these are microseconds of time where there are expected glithces.
+#These time periods are ignored during pulse finding algorithms. 
+ignore_regions: [[0, 50], [980, 1050]] 
 
 
 #This is used to identify whether the 0-31/32-63 

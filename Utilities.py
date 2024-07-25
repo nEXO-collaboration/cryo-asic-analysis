@@ -4,6 +4,18 @@ import numpy as np
 
 #this is a set of importable utilities that is common to many of the classes in this project. 
 
+#return the unique channel ID given an asic number 
+#and a channel number local to that asic
+def get_unique_id(asic, ch):
+    return asic*64 + ch
+
+#inverse of the above, return the asic and channel number
+#given a unique channel ID
+def get_asic_and_ch(ch):
+    asic = math.floor(ch/64)
+    ch = ch % 64
+    return asic, ch
+
 
 #get the channel type from the channel number
 def get_channel_type(chmap, ch):

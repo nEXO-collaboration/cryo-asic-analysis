@@ -15,9 +15,9 @@
 #which has columns (lists of events) for each of the quantities defined below. Within each event,
 #there may be a list of clusters, each with the datastructure (dictionary) defind in the cluster section. 
 
-
 #embedded as columns of the reduced dataframe, found in DataReduction class
 global:
+  filename: None #is the name of the file that the event came from
   evidx: None #is an identification of the event number that is consistent with waveform_dfs from the combined pickle files of datasets. 
   timestamp: None #is the timestamp of the event, in unix epoch seconds with microsecond precision 
   clusters: [] #is a list of clusters in the event, each with the datastructure defined below.
@@ -33,8 +33,10 @@ global:
 #The keys for these columns will have a string appended to the beginning that indicates
 #the channel ID (unique number, not local ASIC channel number) that the information corresponds to.
 channel_rqs:
-  noise: None #is the noise level of the channel, in ENC
+  baseline_noise: None #is the noise level of the channel over the samples in baseline, in ENC
+  full_window_noise: None #is the noise of the full event ignoring any regions with pulses or glitches, ENC
   baseline: None #is the baseline of the channel, in ADC counts
+
   
 #embedded as keys or attributes of the Cluster class
 cluster: 

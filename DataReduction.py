@@ -2,18 +2,15 @@ import yaml
 import os
 import pandas as pd 
 import pickle
+from Utilities import get_asic_and_ch, get_unique_id, get_channel_type, get_channel_pos, is_channel_strip
 
 
 class DataReduction:
 	#Config is the "analysis config" file in configs, or a dictionary
 	#that has been edited in the notebook (either filepath or dictionary of the yaml file)
-	#The input_files are actualy filenames of what you want to reduce. For example, a list
+	#The input_files is a list of filenames of what you want to reduce. For example, a list
 	#from glob that selects all files with gain 6 and 1.2 pt from some directory. Full path expected.
 	
-	#The input_files can be a list with a single file, in case
-	#you have already combined your input files into one dataframed pickle file. 
-	#Otherwise, it will automatically attempt to combine the input files into a single file.
-	#This could be a place you want to change... say put that combining routine in the utilities.py 
 	def __init__(self, config, input_files):
 
 		self.configfile_or_dict = config
@@ -94,17 +91,33 @@ class DataReduction:
 				print("Failed to populate the reduced quantities dictionary")
 			return
 
-		#start with globals. 
-		for key in self.rq_dict["global"]:
-			self.reduced_df[key] = self.rq_dict["global"][key] #values in the dict are the initialization state. 
-
-		#now do channel-level quantities for each channel. 
-		#get all of the channel IDs
-		for ch in self.chmap:
-			for key in self.rq_dict["channel_rqs"]:
-				self.reduced_df["ch{:d}_".format(ch) + key] = self.rq_dict["channel_rqs"][key]
+		#get an empty event, which is a dictionary with the keys of the reduced quantities
+		empty_event = self.get_empty_event()
+		#populate the reduced_df with the keys from the reduced quantities dictionary
+		for key in empty_event:
+			self.reduced_df[key] = []
 
 		#done
+
+	#returns an empty, initialized event where each key's element
+	#can be appended to the reduced_df keys of the same name. 
+	def get_empty_event(self):
+		event = {}
+		for key in self.rq_dict["global"]:
+			event[key] = self.rq_dict["global"][key] #initialize to the default value specified in the yaml file. 
+		
+		#Here is a place where you 
+		#may want to decide to ignore all dummy channels, as you may
+		#never want to really analyze the dummy channels within the data
+		#reduction code framework. 
+		for asic in self.chmap:
+			for ch in self.chmap:
+				chid = get_unique_id(asic, ch)
+				for key in self.rq_dict["channel_rqs"]:
+					event["ch{:d}_".format(chid) + key] = self.rq_dict["channel_rqs"][key] #initialize to the default value specified in the yaml file.
+
+		return event
+
 
 	#The path is the full path of output 
 	#The filename is the name of the file you want to save with no extensions. 
@@ -126,23 +139,33 @@ class DataReduction:
 			pickle.dump([self.reduced_df], open(path+filename+".p", 'wb'))
 
 	
-	def load_input_data(self):
-		#load the input data
-		#If the input_files is a single file, just load it. 
-		if(len(self.input_files) == 1):
-			self.waveform_df = pickle.load(open(self.input_files[0], 'rb'))[0]
-		
-		#otherwise, combine the files. 
-		else:
-			#combine the dataframes from many files. 
-			full_df = None
-			print("Combining files...")
-			for f in self.input_files:
-				print("On file {}".format(f))
-				temp_df = pickle.load(open(f, "rb"))[0]
-				if(full_df is None):
-					full_df = temp_df
-				else:
-					full_df = pd.concat([full_df, temp_df], ignore_index=True)
-			self.waveform_df = full_df
+
+	def reduce_data(self):
+
+		#There may be an infinite amount of data files input to this reduction code. 
+		#Instead of loading all of them and combining into a big waveform_df, we will
+		#load each one, reduce each one, build up a big reduced_df that is a culmination
+		#of all of the waveform_df files. Two key elements of the reduced_df are the
+		#filename and evidx within that filename, used to re-index events to their origin. 
+		for infile in self.input_files:
+			self.waveform_df = pickle.load(open(infile, 'rb'))[0]
+
+			for i, row in self.waveform_df.iterrows():
+				event_output = self.get_empty_event()
+				
+				#do all of your analysis on the event ("row")
+				event_output["filename"] = infile
+				event_output["evidx"] = i
+
+				#for now I am leaving all analysis steps empty and going to save
+				#all default values to the reduced_df. This is the final step. 
+
+				#append the event to the reduced_df
+				for key in event_output:
+					self.reduced_df[key].append(event_output[key])
+
+
+
+			
+	
 		
