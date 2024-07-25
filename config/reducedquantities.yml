@@ -1,0 +1,76 @@
+#There are three main classes in the reduction code for the charge
+#waveforms: DataReduction, Cluster, and Pulse. Pulses are a part of clusters.
+#Clusters are a part of every event, of which there is a dataframe row for
+#each event contained within the DataReduction dataframe. 
+
+#this file can be used to quickly look up and add reduced quantities
+#that will be the output of the data reduction routines. 
+
+#Each of the classes uses the dictionaries parsed from this yaml
+#file to form a set of columns in a dataframe (not always a pandas, sometimes just a dict). 
+#The methods in those classes can be used and edited to further define
+#and manipulate these quantities. 
+
+#The output of the reduction is a dictionary, which may be converted to a pd.DataFrame at the end, 
+#which has columns (lists of events) for each of the quantities defined below. Within each event,
+#there may be a list of clusters, each with the datastructure (dictionary) defind in the cluster section. 
+
+
+#embedded as columns of the reduced dataframe, found in DataReduction class
+global:
+  evidx: None #is an identification of the event number that is consistent with waveform_dfs from the combined pickle files of datasets. 
+  timestamp: None #is the timestamp of the event, in unix epoch seconds with microsecond precision 
+  clusters: [] #is a list of clusters in the event, each with the datastructure defined below.
+  n_clusters: None #is the number of clusters in the event, for quick cuts using pd masks
+  total_charge: None #is the total charge in the event, in fC, summing all analyzed clusters 
+  x: None #is the x position of the event, in mm, determined from the cluster with the highest charge
+  y: None #is the y position of the event, in mm, determined from the cluster with the highest charge
+  z: None #is the z position of the event, in mm, determined from the cluster with the highest charge
+  t: None #is the average time of arrival relative to the event start, in microseconds, determined from the cluster with the highest charge
+
+#inside the DataReduction class dataframe there will be a number of columns that save
+#ancillary information about the channels, such as their noise level, baseline, and other things. 
+#The keys for these columns will have a string appended to the beginning that indicates
+#the channel ID (unique number, not local ASIC channel number) that the information corresponds to.
+channel_rqs:
+  noise: None #is the noise level of the channel, in ENC
+  baseline: None #is the baseline of the channel, in ADC counts
+  
+#embedded as keys or attributes of the Cluster class
+cluster: 
+  pulses: [] #a list of pulse elements that are part of the cluster
+  #the best reconstruction of charge that can be made from the cluster. Using information from induction and collection signals if need be. 
+  q: None
+  #channels with a signal above threshold in the cluster 
+  channels: []
+  #the arrival time of the cluster, in microseconds
+  t_arrival: None
+  #position variables of the cluster
+  x: None
+  y: None
+  z: None
+  #transverse width of the charge deposition
+  width: None
+
+
+#embedded as keys or attributes of the Pulse class
+pulse: 
+  #best reconstruction of the charge of the pulse in fC, using the gain and ADC conversion
+  q_collection: None
+  #best reconstruction of the "charge" sensed as fit by a model that assumes the shape of induction waveforms, where charge is not collected
+  q_induction: None 
+  #the maximum of the pulse, in ADC 
+  max: None 
+  #the minimum (for induction swing) in ADC 
+  min: None
+  #the time of the maximum of the waveform, in microseconds
+  tmax: None
+  #the time of the minimum of the waveform, in microseconds
+  tmin: None
+  #the arrival time of the pulse (as defined in the algorithm) in microseconds
+  t_arrival: None
+  #the width of the waveform in microseconds
+  width: None
+  #channel of this pulse
+  channel: None
+

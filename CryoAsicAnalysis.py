@@ -17,6 +17,7 @@ import matplotlib.transforms as transforms
 from matplotlib.ticker import ScalarFormatter
 from scipy import signal
 from scipy.interpolate import interp1d
+from Utilities import get_channel_type, get_channel_pos, ADC_to_ENC, is_channel_strip
 
 #used in pulse finding analysis
 from operator import itemgetter
@@ -91,72 +92,6 @@ class CryoAsicAnalysis:
 					print(exc)
 		#done 
 
-	#get the channel type from the channel number
-	def get_channel_type(self, ch):
-		if(self.chmap is None):
-			print("Channel map didn't properly load")
-			return None
-		local_ch = ch % 64 #the channel number on the asic level. 
-		asic = math.floor(ch/64) # the asic ID that this ch corresponds to. 
-		
-		
-		if(asic in self.chmap):
-			if(local_ch in self.chmap[asic]["xstrips"]):
-				return 'x'
-			elif(local_ch in self.chmap[asic]["ystrips"]):
-				return 'y'
-			else:
-				return 'dummy'
-			
-		else:
-			print("Asic {:d} not found in the configuration file channel map".format(asic))
-			return None
-		
-	#returns the global position of the channel in the TPC
-	#using knowledge of the tile position. If it is a dummy, 
-	#return 0, 0 
-	def get_channel_pos(self, ch):
-		if(self.chmap is None):
-			print("Channel map didn't properly load")
-			return None
-
-		local_ch = ch % 64 #the channel number on the asic level. 
-		asic = math.floor(ch/64) # the asic ID that this ch corresponds to. 
-		tile_pos = self.chmap[asic]["tile_pos"]
-		pitch = self.chmap[asic]["strip_pitch"] #in mm
-
-		if(asic in self.chmap):
-			if(local_ch in self.chmap[asic]["xstrips"]):
-				local_pos = float(self.chmap[asic]["xstrips"][local_ch])
-				return (tile_pos[0], tile_pos[1] + np.sign(local_pos)*(np.abs(local_pos) - 0.5)*pitch)
-			elif(local_ch in self.chmap[asic]["ystrips"]):
-				local_pos = float(self.chmap[asic]["ystrips"][local_ch])
-				return (tile_pos[0] + np.sign(local_pos)*(np.abs(local_pos) - 0.5)*pitch, tile_pos[1])
-			else:
-				return tile_pos #this is a dummy capacitor
-		else:
-			print("Asic {:d} not found in the configuration file channel map".format(asic))
-			return None
-
-	#FYI - for other calculations. 
-	#(x1, x1.5, x3, x6) is {1: 9.6, 1.5: 14.3, 3:28.6, 6:57.2} mV/fC
-	@np.vectorize
-	def ADC_to_ENC(ADC, Gain=6, pt=1.2):
-
-		Gain = str(Gain)
-		pt = str(pt)
-
-		V_Max = {}
-		V_Max["1"] = {"0.6": 1.5798, "1.2": 1.5751, "2.4": 1.5785, "3.6": 1.5769} # ASIC Voltage Saturation According to Aldo
-		V_Max["1.5"] = {"0.6": 1.5773, "1.2": 1.5731, "2.4": 1.5783, "3.6": 1.5763}	
-		V_Max["3"] = {"0.6": 1.5706, "1.2": 1.5679, "2.4": 1.5735, "3.6": 1.5741}
-		V_Max["6"] = {"0.6": 1.5604, "1.2": 1.5609, "2.4": 1.5659, "3.6": 1.5703}
-		
-		Q_Max = {"1": 150e-15, "1.5": 100e-15, "3": 50e-15, "6": 25e-15} #Maximum charge range of the ASIC in Coloumbs
-
-		ENC = ADC*(1.2/2**12)*(Q_Max[Gain]/V_Max[Gain][pt])/1.6e-19
-		return ENC
-
 	#given a time, return the closest sample index (int)
 	def time_to_sample(self, t):
 		idx = (np.abs(np.asarray(self.times) - t)).argmin()
@@ -187,19 +122,11 @@ class CryoAsicAnalysis:
 		for i, ch in enumerate(ev["Channels"]):
 			ev_dict["Channel"].append(ch)
 			ev_dict["Data"].append(ev["Data"][i])
-			ev_dict["ChannelType"].append(self.get_channel_type(ch))
-			ev_dict["ChannelPos"].append(self.get_channel_pos(ch))
+			ev_dict["ChannelType"].append(get_channel_type(self.chmap,ch))
+			ev_dict["ChannelPos"].append(get_channel_pos(self.chmap,ch))
 
 		evdf = pd.DataFrame.from_dict(ev_dict)
 		return evdf
-
-
-	def is_channel_strip(self, ch):
-		result = self.get_channel_type(ch)
-		if(result == "dummy"):
-			return False
-		else:
-			return True
 
 	#for the moment, we will baseline subtract based
 	#on an input window 
@@ -245,7 +172,7 @@ class CryoAsicAnalysis:
 		curshift = 0
 		for i in range(nch):
 			if(i in chs_to_plot):
-				if ENC: ax.plot(times, self.ADC_to_ENC(waves[i] + curshift), label=str(chs[i]))
+				if ENC: ax.plot(times, ADC_to_ENC(waves[i] + curshift), label=str(chs[i]))
 				else: ax.plot(times, waves[i] + curshift, label=str(chs[i]))
 				ax.set_title(title)
 				if window:
@@ -673,7 +600,7 @@ class CryoAsicAnalysis:
 		for evt in range(nevents):
 			evt_times = []
 			for ch in chs:
-				if not self.is_channel_strip(ch): continue
+				if not is_channel_strip(self.chmap, ch): continue
 				WVFM = self.get_wave(evt, ch)
 				if ch ==1: time = len(WVFM * self.dT)
 				sigma = np.std(WVFM)
@@ -1010,7 +937,7 @@ class CryoAsicAnalysis:
 
 		plt.figure()
 		for channel in evdf["Channel"]:
-			type = self.get_channel_type(channel)
+			type = get_channel_type(self.chmap,channel)
 			if type == "dummy": continue
 			
 			channel_max = np.max((evdf["Data"][channel])[time-window:time+window])
@@ -1060,7 +987,7 @@ class CryoAsicAnalysis:
 
 		for i, row in self.noise_df.iterrows():
 			ch = row["Channel"]
-			typ = self.get_channel_type(ch)
+			typ = get_channel_type(self.chmap,ch)
 			if(typ == "x"):
 				xstrips["ch"].append(ch)
 				xstrips["std"].append(row["STD"])
@@ -1075,9 +1002,9 @@ class CryoAsicAnalysis:
 		if(ax is None):
 			fig, ax = plt.subplots()
 
-		xmean = self.ADC_to_ENC(np.mean(xstrips["std"]))
-		ymean = self.ADC_to_ENC(np.mean(ystrips["std"]))
-		dmean = self.ADC_to_ENC(np.mean(dummies["std"]))
+		xmean = ADC_to_ENC(np.mean(xstrips["std"]))
+		ymean = ADC_to_ENC(np.mean(ystrips["std"]))
+		dmean = ADC_to_ENC(np.mean(dummies["std"]))
 		ax.scatter(xstrips["ch"], xstrips["std"], label="X Strips: {:.1f} e- mean".format(xmean), s=100)
 		ax.scatter(ystrips["ch"], ystrips["std"], label="Y Strips: {:.1f} e- mean".format(ymean), s=100)
 		ax.scatter(dummies["ch"], dummies["std"], label="dummies: {:.1f} e- mean".format(dmean), s=100)
@@ -1088,7 +1015,7 @@ class CryoAsicAnalysis:
 		ax.grid(False)
 
 		axENC = ax.twinx()
-		ENCLim = self.ADC_to_ENC(ax.get_ylim())
+		ENCLim = ADC_to_ENC(ax.get_ylim())
 		axENC.set_ylim(ENCLim[0], ENCLim[1])
 		axENC.set_ylabel("ENC [e^-]")
 		axENC.grid(False)
@@ -1115,24 +1042,24 @@ class CryoAsicAnalysis:
 
 		for i, row in self.noise_df.iterrows():
 			ch = row["Channel"]
-			typ = self.get_channel_type(ch)
+			typ = get_channel_type(self.chmap,ch)
 			if(typ == "x"):
-				xstrips["pos"].append(self.get_channel_pos(ch)[1])
+				xstrips["pos"].append(get_channel_pos(self.chmap,ch)[1])
 				xstrips["std"].append(row["STD"])
 			elif(typ == "y"):
-				ystrips["pos"].append(self.get_channel_pos(ch)[0])
+				ystrips["pos"].append(get_channel_pos(self.chmap,ch)[0])
 				ystrips["std"].append(row["STD"])
 			else:
-				dummies["pos"].append(self.get_channel_pos(ch)[0])
+				dummies["pos"].append(get_channel_pos(self.chmap,ch)[0])
 				dummies["std"].append(row["STD"])
 		
 		
 		if(ax is None):
 			fig, ax = plt.subplots()
 
-		xmean = self.ADC_to_ENC(np.mean(xstrips["std"]))
-		ymean = self.ADC_to_ENC(np.mean(ystrips["std"]))
-		dmean = self.ADC_to_ENC(np.mean(dummies["std"]))
+		xmean = ADC_to_ENC(np.mean(xstrips["std"]))
+		ymean = ADC_to_ENC(np.mean(ystrips["std"]))
+		dmean = ADC_to_ENC(np.mean(dummies["std"]))
 		ax.scatter(xstrips["pos"], xstrips["std"], label="X Strips: {:.1f} e- mean".format(xmean), s=100)
 		ax.scatter(ystrips["pos"], ystrips["std"], label="Y Strips: {:.1f} e- mean".format(ymean), s=100)
 		ax.scatter(dummies["pos"], dummies["std"], label="dummies: {:.1f} e- mean".format(dmean), s=100)
@@ -1143,7 +1070,7 @@ class CryoAsicAnalysis:
 		ax.grid(False)
 
 		axENC = ax.twinx()
-		ENCLim = self.ADC_to_ENC(ax.get_ylim())
+		ENCLim = ADC_to_ENC(ax.get_ylim())
 		axENC.set_ylim(ENCLim[0], ENCLim[1])
 		axENC.set_ylabel("ENC [e^-]")
 		axENC.grid(False)

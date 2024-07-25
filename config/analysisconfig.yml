@@ -1,16 +1,6 @@
 chmap: ../config/channelmap.yml
-baseline: [250, 500] #in microseconds relative to the start of the event window
-sampling_rate: 1 #MSPS
-gain: 6 #encoded gain integer, corresponding to something on order 30 mV/fC (check manual for accurate gains)
-pt: 2.4 #us
-pulse_threshold: 6 #in multiples of the standard deviation of baseline
-mv_per_adc: 0.439453 #mV/adc 
-#This is used to identify whether the 0-31/32-63 
-#channels have been swapped due to a high speed 
-#data line processing error on the part of the ePix.
-#It has not been used in a while... 
-key_channel: None 
-dead_channels: [] #Any channels you want to selectively ignore from some analyses
+reduced_quantities: ../config/reducedquantities.yml
+
 
 #this is an index for the asic number, which will index the tile position for which that asic is attached.
 #eventually we will have a structure where you parse many files, one for each asic, with their own
@@ -18,3 +8,22 @@ dead_channels: [] #Any channels you want to selectively ignore from some analyse
 #This would be a prereduction phase. But this asic number is used to give channels from the different asics
 #unique identifiers that follows the form (asic)*64 + local_channel_num. 
 asic: 0 
+#These quantities are often changed based on the files that are being parsed. 
+sampling_rate: 1 #MSPS
+gain: 6 #encoded gain integer, corresponding to something on order 30 mV/fC (check manual for accurate gains)
+pt: 2.4 #us
+
+
+#analysis and reduction based quantities
+baseline: [250, 500] #in microseconds relative to the start of the event window
+pulse_threshold: 6 #in multiples of the standard deviation of baseline. Default, can be overridden as an argument in reduction routines. 
+mv_per_adc: 0.439453 #mV/adc 
+
+
+#This is used to identify whether the 0-31/32-63 
+#channels have been swapped due to a high speed 
+#data line processing error on the part of the ePix.
+#It has not been used in a while... 
+key_channel: None 
+
+dead_channels: [] #Any channels you want to selectively ignore from some analyses
