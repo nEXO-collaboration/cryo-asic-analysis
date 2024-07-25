@@ -136,7 +136,9 @@ class DataReduction:
 		else:
 			#combine the dataframes from many files. 
 			full_df = None
+			print("Combining files...")
 			for f in self.input_files:
+				print("On file {}".format(f))
 				temp_df = pickle.load(open(f, "rb"))[0]
 				if(full_df is None):
 					full_df = temp_df
