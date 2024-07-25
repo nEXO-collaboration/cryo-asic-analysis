@@ -148,9 +148,11 @@ class DataReduction:
 		#of all of the waveform_df files. Two key elements of the reduced_df are the
 		#filename and evidx within that filename, used to re-index events to their origin. 
 		for infile in self.input_files:
+			print("Reducing file {}".format(infile))
 			self.waveform_df = pickle.load(open(infile, 'rb'))[0]
 
 			for i, row in self.waveform_df.iterrows():
+				if(i % 500 == 0): print("On event {:d} of {:d}".format(i, len(self.waveform_df.index)))
 				event_output = self.get_empty_event()
 				
 				#do all of your analysis on the event ("row")
