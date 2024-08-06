@@ -3,6 +3,7 @@ import os
 import pandas as pd 
 import pickle
 from Utilities import get_asic_and_ch, get_unique_id, get_channel_type, get_channel_pos, is_channel_strip
+import CryoAsicFile
 
 
 class DataReduction:
@@ -11,7 +12,7 @@ class DataReduction:
 	#The input_files is a list of filenames of what you want to reduce. For example, a list
 	#from glob that selects all files with gain 6 and 1.2 pt from some directory. Full path expected.
 	
-	def __init__(self, config, input_files):
+	def __init__(self, input_files, config):
 
 		self.configfile_or_dict = config
 		self.config = None #has global analysis config dictionary contents
@@ -147,16 +148,46 @@ class DataReduction:
 		#load each one, reduce each one, build up a big reduced_df that is a culmination
 		#of all of the waveform_df files. Two key elements of the reduced_df are the
 		#filename and evidx within that filename, used to re-index events to their origin. 
+
+		# Glenn's Note: I disagree slightly here. I think there can be a theoretically infinite
+		# number of files handed here, but as long as we maintain a good naming scheme with data
+		# files, then we don't need to save the full file name, which I think will be clunky to 
+		# read, and hard to mask on as well. Instead, we can maintain out current data naming
+		# scheme which ends each file with "file_##.dat" and reference the number of that file.
+		# The name of the file will be savd in the name of the reduced df file so all information
+		# is preserved in minimal and easily parsable way
+
 		for infile in self.input_files:
 			print("Reducing file {}".format(infile))
-			self.waveform_df = pickle.load(open(infile, 'rb'))[0]
+
+			if infile.split('.')[-1] == "dat":
+
+				# If binary file is given it will automatically reduce it to necessary pickle file
+				print('Data Reduction was given a binary file - Converting to unreduced df')
+				cf = CryoAsicFile.CryoAsicFile(infile, self.configfile_or_dict)
+				cf.load_raw_data()
+				cf.group_into_pandas()
+				outfilename = infile.split('.')[0] + infile.split('.')[1] + '.p'
+				cf.pickle_dump_waveform_df(outfilename)
+
+				self.waveform_df = pickle.load(outfilename, 'rb')[0]
+
+			elif infile.split('.')[-1] == 'p':
+				self.waveform_df = pickle.load(open(infile, 'rb'))[0]
+
+			else:
+				print('Unrecognized file type .{0} given to data reducer. Pleas check file paths and try again.'.format(infile.split('.')[-1]))
+				return
+
+			file_num = (((infile.split('/')[-1]).split('_')[-1]).split('.')[0])[4:]
 
 			for i, row in self.waveform_df.iterrows():
 				if(i % 500 == 0): print("On event {:d} of {:d}".format(i, len(self.waveform_df.index)))
 				event_output = self.get_empty_event()
 				
 				#do all of your analysis on the event ("row")
-				event_output["filename"] = infile
+				
+				event_output["filenum"] = file_num
 				event_output["evidx"] = i
 
 				#for now I am leaving all analysis steps empty and going to save

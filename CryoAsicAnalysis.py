@@ -973,7 +973,7 @@ class CryoAsicAnalysis:
 		return fig, ax
 	
 
-	def plot_stds(self, ax=None, show=True):
+	def plot_stds(self, ax=None, show=True, dummy = True):
 		if(len(self.noise_df.index) == 0):
 			print("No STD information present. Generating now:")
 			self.calculate_stds()
@@ -1007,7 +1007,7 @@ class CryoAsicAnalysis:
 		dmean = ADC_to_ENC(np.mean(dummies["std"]))
 		ax.scatter(xstrips["ch"], xstrips["std"], label="X Strips: {:.1f} e- mean".format(xmean), s=100)
 		ax.scatter(ystrips["ch"], ystrips["std"], label="Y Strips: {:.1f} e- mean".format(ymean), s=100)
-		ax.scatter(dummies["ch"], dummies["std"], label="dummies: {:.1f} e- mean".format(dmean), s=100)
+		if dummy: ax.scatter(dummies["ch"], dummies["std"], label="dummies: {:.1f} e- mean".format(dmean), s=100)
 		ax.set_xlabel("Channel number")
 		ax.set_ylabel("STD [ADC]")
 		ax.set_title("Cryo ASIC Noise by Channel")

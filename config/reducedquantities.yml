@@ -17,7 +17,7 @@
 
 #embedded as columns of the reduced dataframe, found in DataReduction class
 global:
-  filename: None #is the name of the file that the event came from
+  filenum: None #is the number of the file that the event came from
   evidx: None #is an identification of the event number that is consistent with waveform_dfs from the combined pickle files of datasets. 
   timestamp: None #is the timestamp of the event, in unix epoch seconds with microsecond precision 
   clusters: [] #is a list of clusters in the event, each with the datastructure defined below.
