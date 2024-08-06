@@ -189,6 +189,7 @@ class DataReduction:
 				
 				event_output["filenum"] = file_num
 				event_output["evidx"] = i
+				event_output["timestamp"].append(row["Timestamp"])
 
 				#for now I am leaving all analysis steps empty and going to save
 				#all default values to the reduced_df. This is the final step. 
