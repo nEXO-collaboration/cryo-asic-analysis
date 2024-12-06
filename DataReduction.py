@@ -1,10 +1,12 @@
 import yaml 
 import os
 import pandas as pd 
+import numpy as np
+from scipy.signal import find_peaks
 import pickle
-from Utilities import get_asic_and_ch, get_unique_id, get_channel_type, get_channel_pos, is_channel_strip
+from Utilities import get_asic_and_ch, get_unique_id, get_channel_type, get_channel_pos, is_channel_strip, ADC_to_ENC
 import CryoAsicFile
-
+import Pulse
 
 class DataReduction:
 	#Config is the "analysis config" file in configs, or a dictionary
@@ -96,27 +98,40 @@ class DataReduction:
 		empty_event = self.get_empty_event()
 		#populate the reduced_df with the keys from the reduced quantities dictionary
 		for key in empty_event:
-			self.reduced_df[key] = []
+
+			# Organizing the sub channel_rqs sub structre
+			if key in self.rq_dict["channel_rqs"]:
+				self.reduced_df[key] = {}
+				for key2 in empty_event[key]:
+					self.reduced_df[key][key2] = []
+			else:
+				self.reduced_df[key] = []
 
 		#done
 
 	#returns an empty, initialized event where each key's element
 	#can be appended to the reduced_df keys of the same name. 
 	def get_empty_event(self):
+		
 		event = {}
+
+		event["pulse"] = [] # Adding in a temporary pulse key to store out infomration while we work on making the pulse class
+
 		for key in self.rq_dict["global"]:
 			event[key] = self.rq_dict["global"][key] #initialize to the default value specified in the yaml file. 
-		
-		#Here is a place where you 
-		#may want to decide to ignore all dummy channels, as you may
-		#never want to really analyze the dummy channels within the data
-		#reduction code framework. 
-		for asic in self.chmap:
-			for ch in self.chmap:
-				chid = get_unique_id(asic, ch)
-				for key in self.rq_dict["channel_rqs"]:
-					event["ch{:d}_".format(chid) + key] = self.rq_dict["channel_rqs"][key] #initialize to the default value specified in the yaml file.
 
+		# Note we implictly skip dummy channels by only looping over the channel map
+
+		for key in self.rq_dict["channel_rqs"]:
+			event[key] = {}
+			for asic in self.chmap:
+				for xch in self.chmap[asic]["xstrips"]:
+					chid = get_unique_id(asic, xch)
+					event[key]["ch{:d}".format(chid)] = []
+			
+				for ych in self.chmap[asic]["ystrips"]:
+					chid = get_unique_id(asic, ych)
+					event[key]["ch{:d}".format(chid)] = []
 		return event
 
 
@@ -141,7 +156,7 @@ class DataReduction:
 
 	
 
-	def reduce_data(self):
+	def reduce_data(self, Skip_Baseline=False):
 
 		#There may be an infinite amount of data files input to this reduction code. 
 		#Instead of loading all of them and combining into a big waveform_df, we will
@@ -176,27 +191,87 @@ class DataReduction:
 				self.waveform_df = pickle.load(open(infile, 'rb'))[0]
 
 			else:
-				print('Unrecognized file type .{0} given to data reducer. Pleas check file paths and try again.'.format(infile.split('.')[-1]))
+				print('Unrecognized file type .{0} given to data reducer. Please check file paths and try again.'.format(infile.split('.')[-1]))
 				return
 
 			file_num = (((infile.split('/')[-1]).split('_')[-1]).split('.')[0])[4:]
 
+			self.initialize_reduced_df()
+
+			## Looping over each event in the file to add paramters to 
 			for i, row in self.waveform_df.iterrows():
 				if(i % 500 == 0): print("On event {:d} of {:d}".format(i, len(self.waveform_df.index)))
-				event_output = self.get_empty_event()
 				
 				#do all of your analysis on the event ("row")
 				
-				event_output["filenum"] = file_num
-				event_output["evidx"] = i
-				event_output["timestamp"].append(row["Timestamp"])
+				self.reduced_df["filenum"].append(file_num)
+				self.reduced_df["evidx"].append(i)
+				self.reduced_df["timestamp"].append(row["Timestamp"])
 
-				#for now I am leaving all analysis steps empty and going to save
-				#all default values to the reduced_df. This is the final step. 
+				# To fill in the cluster and pulse reduced quantities we start from the 
+				# bottom and work our way up - identify pulses in the window and then
+				# fill in pulses and once that's done we group them together to fill
+				# in cluster information and then finally complete the relevent
+				# global information
 
-				#append the event to the reduced_df
-				for key in event_output:
-					self.reduced_df[key].append(event_output[key])
+				# Temporarily writing to our temp column of pulses while we work on clustering algorithm
+				self.reduced_df["pulse"].append(self.find_pulses(i,row))
+
+				# As of this build, baseline data is by far the slowest, so we give the option to skip it for speed if desired
+				if not Skip_Baseline:
+					self.fill_in_baselines(row)
+
+
+	# Put this in DataReduction file because I thought it'd be short and sweet, but might be worth moving to its own file for consistancy later
+	def fill_in_baselines(self, row):
+
+		for ch in row["Channels"]:
+
+			# Note we continue to skip dummy channels
+			if not is_channel_strip(self.chmap, ch): continue
+			
+			wvfm = row["Data"][ch]
+			bl_window = wvfm[self.config["baseline"][0]*self.config["sampling_rate"]: self.config["baseline"][1]*self.config["sampling_rate"]]
+			self.reduced_df["baseline_noise"]["ch{:d}".format(ch)].append(ADC_to_ENC(np.std(bl_window)))
+			# Ignoring full_window_noise for now since will require cutting out pulses - so need to get pulse finder workng first
+			#self.reduced_df["full_window_noise"]["ch{:d}".format(ch)].append(ADC_to_ENC(np.std(wvfm))) 
+			self.reduced_df["baseline"]["ch{:d}".format(ch)].append(np.asarray(ADC_to_ENC(bl_window)))
+			self.reduced_df["baseline_shift"]["ch{:d}".format(ch)].append(ADC_to_ENC(np.mean(bl_window)))
+
+
+	def find_pulses(self, event, row, n_sigma=4, width=30):
+
+
+		pulse_df = {}
+		
+		# Checking to see if user has given a custom threshold value
+		if n_sigma is None:
+			n_sigma = self.config["pulse_threshold"]
+
+		for ch in row["Channels"]:
+
+			# Note we skip dummy channels for the actual event anlaysis too
+			if not is_channel_strip(self.chmap, ch):
+				continue
+
+			wvfm = row["Data"][ch]
+			temp_pulses, params = find_peaks(wvfm, width=self.config["pt"], height = n_sigma*np.std(wvfm)+np.mean(wvfm), wlen=width)
+			pulses = []
+			
+			for p in temp_pulses:
+				
+				if not (any(window[0] <= p <= window[1] for window in self.config["ignore_regions"])):
+					pulses.append(p)
+
+			for i, peak in enumerate(pulses):
+
+				## Taking a convention where each pulse will be listed as "Pulse {event}-{pulse number within the event}"
+				pulse_df["Pulse {0}-{1}".format(event, i)] = Pulse.Pulse(self.config, self.rq_dict["pulse"], wvfm, i, params).d
+				(pulse_df["Pulse {0}-{1}".format(event, i)])["channel"] = ch
+
+		return pulse_df
+
+
 
 
 
