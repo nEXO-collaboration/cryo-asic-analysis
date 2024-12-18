@@ -1,0 +1,32 @@
+chmap: ../config/channelmap.yml
+reduced_quantities: ../config/reducedquantities.yml
+
+
+#this is an index for the asic number, which will index the tile position for which that asic is attached.
+#eventually we will have a structure where you parse many files, one for each asic, with their own
+#configuration dictionary, which are then combined into a single waveform dataframe after loading the files. 
+#This would be a prereduction phase. But this asic number is used to give channels from the different asics
+#unique identifiers that follows the form (asic)*64 + local_channel_num. 
+asic: 0 
+#These quantities are often changed based on the files that are being parsed. 
+sampling_rate: 1 #MSPS
+gain: 6 #encoded gain integer, corresponding to something on order 30 mV/fC (check manual for accurate gains)
+pt: 2.4 #us
+
+
+#analysis and reduction based quantities
+baseline: [250, 500] #in microseconds relative to the start of the event window
+pulse_threshold: 6 #in multiples of the standard deviation of baseline. Default, can be overridden as an argument in reduction routines. 
+mv_per_adc: 0.439453 #mV/adc, this should be phased out eventually, as mV is not a totally useful unit 
+#these are microseconds of time where there are expected glithces.
+#These time periods are ignored during pulse finding algorithms. 
+ignore_regions: [[0, 50], [980, 1050]] 
+
+
+#This is used to identify whether the 0-31/32-63 
+#channels have been swapped due to a high speed 
+#data line processing error on the part of the ePix.
+#It has not been used in a while... 
+key_channel: None 
+
+dead_channels: [] #Any channels you want to selectively ignore from some analyses

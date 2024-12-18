@@ -5,16 +5,16 @@ from Utilities import ADC_to_ENC
 class Pulse:
     #initialize the pulse with its reduced quantities which
     #should be parsed externally (by the instantiator) from a yaml file
-    def __init__(self, config, rd_parms, wvfm, i, params):
+    def __init__(self, rqs, config):
 
+        self.rqs = rqs
         self.d = {}
-        #initialize the pulse dictionary, with
-        #values specified in the yaml file that 
+        #initialize the cluster dictionary, with
+        #initialze values specified in the yaml file that 
         #defines RQs. 
-        for key in rd_parms:
-            self.d[key] = rd_parms[key]
+        for key in self.rqs:
+            self.d[key] = self.rqs[key]
 
-        self.populate_rqs(config, wvfm, i, params)
 
     #populate the reduced quantities with the default values
     def populate_rqs(self, config, wvfm, i, params):

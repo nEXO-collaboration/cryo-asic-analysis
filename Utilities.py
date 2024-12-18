@@ -90,3 +90,17 @@ def ADC_to_ENC(ADC, Gain=6, pt=1.2):
 
     ENC = ADC*(1.2/2**12)*(Q_Max[Gain]/V_Max[Gain][pt])/1.6e-19
     return ENC
+
+
+#wavs are numpy array of shape wavs[event][channel][sample] 
+#and the bl_window is [start sample, end sample]
+def find_baseline_windowed(wavs, bl_window):
+    return np.median(wavs[:,:,bl_window[0]:bl_window[1]], axis=2)
+
+def find_baseline_stds_windowed(wavs, bl_window):
+    return np.std(wavs[:,:,bl_window[0]:bl_window[1]], axis=2)
+
+def find_min_masked(wavs, mask):
+    #mask is a list of sample regions for which the min function
+    #should ignore. 
+    return np.min(np.ma.masked_array(wavs, mask), axis=2).data

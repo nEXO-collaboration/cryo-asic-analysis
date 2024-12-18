@@ -4,8 +4,7 @@ import pandas as pd
 import numpy as np
 from scipy.signal import find_peaks
 import pickle
-from Utilities import get_asic_and_ch, get_unique_id, get_channel_type, get_channel_pos, is_channel_strip, ADC_to_ENC
-import CryoAsicFile
+import Utilities as Util
 import Pulse
 
 class DataReduction:
@@ -26,18 +25,16 @@ class DataReduction:
 		self.rq_dict = None
 		self.load_rq_dict() #Populates that dictionary with the entirity of the reducedquantities yaml file
 
-		#The output starts as a dictionary, can later be saved as a pandas dataframe. 
-		#The keys are the reduced quantities, and the values are lists of the reduced quantities
-		#where each element of the list is a "row" or event. For example, 
-		#self.reduced_df["x"] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10...] which can then be
-		#converted using pd.DataFrame.from_dict(self.reduced_df) which are often easier
-		#for analysis notebooks as you can mask events using boolean masks. But it is computationally
-		#more expensive to append to pandas dataframes than it is to append to lists. 
+		#The reduced_df is a dictionary with many keys associated with the rqs. Pulses and Clusters
+		#are stored as lists of Pulse and Cluster objects. At the end of reduction, the dict is turned
+		#into a pandas df so that analyses can be performed with slicing. 
 		self.reduced_df = {} 
-		self.initialize_reduced_df() #populates the reduced_df with the keys from the reduced quantities dictionary
 
+		#a temporary waveform_df object for the waveforms that are being analyzed
+		#in the present file. Gets repopulated as one loads the next prereduced file. 
 		self.waveform_df = None #this is the waveform df imported by the input files. 
 
+		#list of prereduced filepaths in .p form at the moment. 
 		self.input_files = input_files
 		
 
@@ -83,31 +80,6 @@ class DataReduction:
 					print(exc)
 		#done
 
-	def initialize_reduced_df(self):
-		self.reduced_df = {} 
-		#initialize the reduced_df with the keys from the reduced quantities dictionary
-		if(self.rq_dict is None):
-			print("Reduced quantities dictionary is empty")
-			print("Trying to populate it now")
-			self.load_rq_dict()
-			if(self.rq_dict is None):
-				print("Failed to populate the reduced quantities dictionary")
-			return
-
-		#get an empty event, which is a dictionary with the keys of the reduced quantities
-		empty_event = self.get_empty_event()
-		#populate the reduced_df with the keys from the reduced quantities dictionary
-		for key in empty_event:
-
-			# Organizing the sub channel_rqs sub structre
-			if key in self.rq_dict["channel_rqs"]:
-				self.reduced_df[key] = {}
-				for key2 in empty_event[key]:
-					self.reduced_df[key][key2] = []
-			else:
-				self.reduced_df[key] = []
-
-		#done
 
 	#returns an empty, initialized event where each key's element
 	#can be appended to the reduced_df keys of the same name. 
@@ -115,23 +87,27 @@ class DataReduction:
 		
 		event = {}
 
-		event["pulse"] = [] # Adding in a temporary pulse key to store out infomration while we work on making the pulse class
-
 		for key in self.rq_dict["global"]:
 			event[key] = self.rq_dict["global"][key] #initialize to the default value specified in the yaml file. 
 
 		# Note we implictly skip dummy channels by only looping over the channel map
-
 		for key in self.rq_dict["channel_rqs"]:
-			event[key] = {}
 			for asic in self.chmap:
 				for xch in self.chmap[asic]["xstrips"]:
-					chid = get_unique_id(asic, xch)
-					event[key]["ch{:d}".format(chid)] = []
+					chid = Util.get_unique_id(asic, xch)
+					event["ch{:d} {}".format(chid, key)] = []
 			
 				for ych in self.chmap[asic]["ystrips"]:
-					chid = get_unique_id(asic, ych)
-					event[key]["ch{:d}".format(chid)] = []
+					chid = Util.get_unique_id(asic, ych)
+					event["ch{:d} {}".format(chid, key)] = []
+
+		
+		#clusters and pulses are stored as lists of Pulse and Cluster
+		#objects inside the event dictionary.
+		event["clusters"] = []
+		event["pulses"] = []
+
+
 		return event
 
 
@@ -145,14 +121,19 @@ class DataReduction:
 		if(os.path.exists(path) == False):
 			os.makedirs(path)
 		
+		#check the filetag of the filename and correct it to .p if it is not already.
+		if(filename.split('.')[-1] != 'p'):
+			tag_removed = filename.split('.')[:-1]
+			filename += tag_removed+'.p'
+
 		#first convert to dataframe
 		if(isinstance(self.reduced_df, dict)):
 			df = pd.DataFrame.from_dict(self.reduced_df)
-			pickle.dump([df], open(path+filename+".p", 'wb'))
+			pickle.dump([df], open(path+filename, 'wb'))
 		else:
 			print("Somehow the self.reduced_df became something other than a dict.")
 			print("Write some handling code in save_reduced_df to handle this")
-			pickle.dump([self.reduced_df], open(path+filename+".p", 'wb'))
+			pickle.dump([self.reduced_df], open(path+filename, 'wb'))
 
 	
 
@@ -164,45 +145,82 @@ class DataReduction:
 		#of all of the waveform_df files. Two key elements of the reduced_df are the
 		#filename and evidx within that filename, used to re-index events to their origin. 
 
-		# Glenn's Note: I disagree slightly here. I think there can be a theoretically infinite
-		# number of files handed here, but as long as we maintain a good naming scheme with data
-		# files, then we don't need to save the full file name, which I think will be clunky to 
-		# read, and hard to mask on as well. Instead, we can maintain out current data naming
-		# scheme which ends each file with "file_##.dat" and reference the number of that file.
-		# The name of the file will be savd in the name of the reduced df file so all information
-		# is preserved in minimal and easily parsable way
-
 		for infile in self.input_files:
 			print("Reducing file {}".format(infile))
 
-			if infile.split('.')[-1] == "dat":
+			#Evan removed a part here that allowed the user to give raw data to this function,
+			#doing the pre-reduction step. I do not want the user to have the flexibility to do this.
+			#it creates too much file handling and organizational issues that we don't want to be responsible for. 
+			#The user must (1) pre-reduce the raw data, then (2) reduce it with this class, and organize accordingly. 
 
-				# If binary file is given it will automatically reduce it to necessary pickle file
-				print('Data Reduction was given a binary file - Converting to unreduced df')
-				cf = CryoAsicFile.CryoAsicFile(infile, self.configfile_or_dict)
-				cf.load_raw_data()
-				cf.group_into_pandas()
-				outfilename = infile.split('.')[0] + infile.split('.')[1] + '.p'
-				cf.pickle_dump_waveform_df(outfilename)
-
-				self.waveform_df = pickle.load(outfilename, 'rb')[0]
-
-			elif infile.split('.')[-1] == 'p':
+			if(infile.split('.')[-1] == 'p'):
 				self.waveform_df = pickle.load(open(infile, 'rb'))[0]
 
 			else:
 				print('Unrecognized file type .{0} given to data reducer. Please check file paths and try again.'.format(infile.split('.')[-1]))
 				return
+			
+			#create a reduced dictionary that has reduced quantities for all events. 
+			#this will be concatenated at the end of this file iteration to the self.reduced_df.
+			red_df = {} 
 
+			#some operations, like baseline subtraction, are much better
+			#to perform on a numpy array as a vectorized operation. For that,
+			#we unpack this dataframe into a numpy array of shape 
+			#wavs[events][channels][samples].shape = (n_events, n_channels, n_samples)
+			wavs = np.array(self.waveform_df["Data"].to_list())
+			chidx_map = np.array(self.waveform_df["Channels"].to_list())[0]
+
+			#convert all sample values from ADC to ENC
+			wavs = Util.ADC_to_ENC(wavs, self.config["gain"], self.config["pt"])
+
+			#baseline subtract the waveforms. This function
+			#will also extracts information related to baselines,
+			#like the std and means.
+			wavs, extracted = self.analyze_and_subtract_baselines(wavs)
+
+			#its also convenient here to get the full waveform stds 
+			full_stds = np.std(wavs, axis=2) #for all events and all channels
+			#add the extracted info to our red_df
+			for chidx in range(len(wavs[0])):
+				#get the unique, ASIC-number agnostic channel ID
+				ch = chidx_map[chidx]
+				red_df["ch{:d} baseline".format(ch)] = extracted["baselines"][:, chidx]
+				red_df["ch{:d} baseline_std".format(ch)] = extracted["stds"][:, chidx]
+				red_df["ch{:d} full_std".format(ch)] = full_stds[:, chidx]
+
+			#the min and max value of all channels can also be vectorized, and would
+			#be simple if not for the glitch pulses that we have to ignore/max certain
+			#regions for. So in the future, you can replace this with one line like np.max(wavs, axis=2)
+			#but for now, we have a special function that calls a utility. 
+			extracted = self.analyze_min_max(wavs)
+			#add the extracted info to our red_df
+			for chidx in range(len(wavs[0])):
+				#get the unique, ASIC-number agnostic channel ID
+				ch = chidx_map[chidx]
+				red_df["ch{:d} min".format(ch)] = extracted["min"][:, chidx]
+				red_df["ch{:d} max".format(ch)] = extracted["max"][:, chidx]
+
+
+
+			#add some global reduced quantities that are simple at this stage
+			#first, Glenn likes to use a filenum at the end of filenames, so save that as a quick variable
+			#in addition to saving the full filename
 			file_num = (((infile.split('/')[-1]).split('_')[-1]).split('.')[0])[4:]
+			red_df["filenum"] = [file_num]*len(self.waveform_df.index)
+			red_df["filename"] = [infile]*len(self.waveform_df.index)
+			red_df["evidx"] = list(range(len(self.waveform_df.index)))
 
-			self.initialize_reduced_df()
 
-			## Looping over each event in the file to add paramters to 
-			for i, row in self.waveform_df.iterrows():
-				if(i % 500 == 0): print("On event {:d} of {:d}".format(i, len(self.waveform_df.index)))
+			#Begin reduction tasks that involve looping event by event. 
+			for evno, row in self.waveform_df.iterrows():
+				if(evno % 500 == 0): print("On event {:d} of {:d}".format(evno, len(self.waveform_df.index)))
 				
-				#do all of your analysis on the event ("row")
+				#get an empty event to fill in
+				red_ev = self.get_empty_event()
+
+				#
+
 				
 				self.reduced_df["filenum"].append(file_num)
 				self.reduced_df["evidx"].append(i)
@@ -221,23 +239,35 @@ class DataReduction:
 				if not Skip_Baseline:
 					self.fill_in_baselines(row)
 
+	#takes in a numpy array of all waves in a file. 
+	def analyze_and_subtract_baselines(self, wavs):
+		#get the baseline window in samples. 
+		bl_window = [int(self.config["baseline"][0]*self.config["sampling_rate"]), int(self.config["baseline"][1]*self.config["sampling_rate"])]
 
-	# Put this in DataReduction file because I thought it'd be short and sweet, but might be worth moving to its own file for consistancy later
-	def fill_in_baselines(self, row):
+		#in a vectorized way, get the baselines and std values for all channels
+		baselines = np.apply_along_axis(Util.find_baseline_windowed, 2, wavs, bl_window)
+		stds = np.apply_along_axis(Util.find_baseline_stds_windowed, 2, wavs, bl_window)
+		sub_wavs = wavs - baselines[:, :, np.newaxis]
+		return sub_wavs, {"baselines": baselines, "stds": stds}
 
-		for ch in row["Channels"]:
+	def analyze_min_max(self, wavs):
+		ignore_regions = self.config["ignore_regions"]
+		#turn into units of samples
+		ignore_regions = [[int(region[0]*self.config["sampling_rate"]), int(region[1]*self.config["sampling_rate"])] for region in ignore_regions]
+		#initialize a mask 
+		samples = wavs.shape[2]
+		mask = np.ones(samples, dtype=bool)
+		for region in ignore_regions:
+			if(region[1] >= samples):
+				region[1] = samples-1
+			if(region[0] < 0):
+				region[0] = 0
+			mask[region[0]:region[1]] = False
 
-			# Note we continue to skip dummy channels
-			if not is_channel_strip(self.chmap, ch): continue
-			
-			wvfm = row["Data"][ch]
-			bl_window = wvfm[self.config["baseline"][0]*self.config["sampling_rate"]: self.config["baseline"][1]*self.config["sampling_rate"]]
-			self.reduced_df["baseline_noise"]["ch{:d}".format(ch)].append(ADC_to_ENC(np.std(bl_window)))
-			# Ignoring full_window_noise for now since will require cutting out pulses - so need to get pulse finder workng first
-			#self.reduced_df["full_window_noise"]["ch{:d}".format(ch)].append(ADC_to_ENC(np.std(wvfm))) 
-			self.reduced_df["baseline"]["ch{:d}".format(ch)].append(np.asarray(ADC_to_ENC(bl_window)))
-			self.reduced_df["baseline_shift"]["ch{:d}".format(ch)].append(ADC_to_ENC(np.mean(bl_window)))
+		masked_waves_min = np.where(mask, wavs, np.inf) #np inf will replace masked values, so a minimum function ignores them
+		masked_waves_max = np.where(mask, wavs, -1*np.inf) #np -inf will replace masked values, so a minimum function ignores them
 
+		return {"min": np.min(masked_waves_min, axis=2), "max": np.max(masked_waves_max, axis=2)}
 
 	def find_pulses(self, event, row, n_sigma=4, width=30):
 
@@ -260,6 +290,8 @@ class DataReduction:
 			
 			for p in temp_pulses:
 				
+				#this is because at the time of writing, we did not know how to remove the glitch pulses
+				#that are injected as leakage currents by the internal calibration pulser. 
 				if not (any(window[0] <= p <= window[1] for window in self.config["ignore_regions"])):
 					pulses.append(p)
 
