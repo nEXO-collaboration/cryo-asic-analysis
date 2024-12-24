@@ -17,10 +17,10 @@
 
 #embedded as columns of the reduced dataframe, found in DataReduction class
 global:
-  filenum: None #is the number of the file that the event came from
   evidx: None #is an identification of the event number that is consistent with waveform_dfs from the combined pickle files of datasets. 
   timestamp: None #is the timestamp of the event, in unix epoch seconds with microsecond precision 
-  clusters: None #is a list of clusters in the event, each with the datastructure defined below.
+  clusters: [] #is a list of clusters in the event, each with the datastructure defined below.
+  pulses: [] #is a list of all pulses found in the event. 
   n_clusters: None #is the number of clusters in the event, for quick cuts using pd masks
   total_charge: None #is the total charge in the event, in fC, summing all analyzed clusters 
   x: None #is the x position of the event, in mm, determined from the cluster with the highest charge

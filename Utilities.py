@@ -71,6 +71,43 @@ def is_channel_strip(chmap, ch):
         return False
     else:
         return True
+    
+#does the spatial analysis to find the N adjacent
+#channels on EACH side of ch and returns a list of ch numbers
+def get_adjacent_channels(chmap, ch, N):
+    #needs to be a strip to have position
+    if(is_channel_strip(chmap, ch) == False):
+        return [] 
+    
+    local_ch = ch % 64 #the channel number on the asic level. 
+    asic = math.floor(ch/64) # the asic ID that this ch corresponds to. 
+    ch_type = get_channel_type(chmap, ch)
+    
+    #get all channel IDs for that strip type
+    if(ch_type == 'x'):
+        all_chs = chmap[asic]["xstrips"]
+    elif(ch_type == 'y'):
+        all_chs = chmap[asic]["ystrips"]
+
+    #get the local position of the channel
+    local_pos = float(all_chs[local_ch])
+    #get a list of the differences between the local position
+    #and the local positions of all the other channels
+    distances = [(ch, loc, loc - local_pos) for ch, loc in all_chs.items() if ch != local_ch]
+    #get the indices of the N closest channels in the positive
+    #and negative direction
+    above = [(ch, loc) for ch, loc, diff in distances if diff > 0]
+    below = [(ch, loc) for ch, loc, diff in distances if diff < 0]
+    # Sort by absolute distance (ascending)
+    above.sort(key=lambda x: x[1] - local_pos)
+    below.sort(key=lambda x: local_pos - x[1])
+    # Get the N closest above and below
+    closest_above = above[:N]
+    closest_below = below[:N]
+    #get the channel numbers of the N closest channels
+    adj = [get_unique_id(asic, chtup[0]) for chtup in closest_above + closest_below]
+    return adj
+
 
 #FYI - for other calculations. 
 #(x1, x1.5, x3, x6) is {1: 9.6, 1.5: 14.3, 3:28.6, 6:57.2} mV/fC
@@ -91,16 +128,3 @@ def ADC_to_ENC(ADC, Gain=6, pt=1.2):
     ENC = ADC*(1.2/2**12)*(Q_Max[Gain]/V_Max[Gain][pt])/1.6e-19
     return ENC
 
-
-#wavs are numpy array of shape wavs[event][channel][sample] 
-#and the bl_window is [start sample, end sample]
-def find_baseline_windowed(wavs, bl_window):
-    return np.median(wavs[:,:,bl_window[0]:bl_window[1]], axis=2)
-
-def find_baseline_stds_windowed(wavs, bl_window):
-    return np.std(wavs[:,:,bl_window[0]:bl_window[1]], axis=2)
-
-def find_min_masked(wavs, mask):
-    #mask is a list of sample regions for which the min function
-    #should ignore. 
-    return np.min(np.ma.masked_array(wavs, mask), axis=2).data

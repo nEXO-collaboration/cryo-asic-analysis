@@ -6,6 +6,7 @@ from scipy.signal import find_peaks
 import pickle
 import Utilities as Util
 import Pulse
+import sys
 
 class DataReduction:
 	#Config is the "analysis config" file in configs, or a dictionary
@@ -13,7 +14,7 @@ class DataReduction:
 	#The input_files is a list of filenames of what you want to reduce. For example, a list
 	#from glob that selects all files with gain 6 and 1.2 pt from some directory. Full path expected.
 	
-	def __init__(self, input_files, config):
+	def __init__(self, config):
 
 		self.configfile_or_dict = config
 		self.config = None #has global analysis config dictionary contents
@@ -28,14 +29,14 @@ class DataReduction:
 		#The reduced_df is a dictionary with many keys associated with the rqs. Pulses and Clusters
 		#are stored as lists of Pulse and Cluster objects. At the end of reduction, the dict is turned
 		#into a pandas df so that analyses can be performed with slicing. 
-		self.reduced_df = {} 
+		self.reduced_df = {} #accumulates over many files. 
 
 		#a temporary waveform_df object for the waveforms that are being analyzed
 		#in the present file. Gets repopulated as one loads the next prereduced file. 
 		self.waveform_df = None #this is the waveform df imported by the input files. 
+		self.infile = None #current infile path. 
+		self.red_df = {} #A temporary, one-file-only reduced dictionary that is concatenated to the self.reduced_df at the end of the file iteration.
 
-		#list of prereduced filepaths in .p form at the moment. 
-		self.input_files = input_files
 		
 
 	def load_config(self, config):
@@ -136,108 +137,128 @@ class DataReduction:
 			pickle.dump([self.reduced_df], open(path+filename, 'wb'))
 
 	
+	def load_prereduced_data(self, infile):
+		#Evan removed a part here that allowed the user to give raw data to this function,
+		#doing the pre-reduction step. I do not want the user to have the flexibility to do this.
+		#it creates too much file handling and organizational issues that we don't want to be responsible for. 
+		#The user must (1) pre-reduce the raw data, then (2) reduce it with this class, and organize accordingly. 
+		
+		if(infile.split('.')[-1] == 'p'):
+			print("loading file {}".format(infile))
+			self.waveform_df = pickle.load(open(infile, 'rb'))[0]
+			self.infile = infile
+			print("Done")
 
-	def reduce_data(self, Skip_Baseline=False):
+		else:
+			print('Unrecognized file type .{0} given to data reducer. Please check file paths and try again.'.format(infile.split('.')[-1]))
+			return
 
-		#There may be an infinite amount of data files input to this reduction code. 
-		#Instead of loading all of them and combining into a big waveform_df, we will
-		#load each one, reduce each one, build up a big reduced_df that is a culmination
-		#of all of the waveform_df files. Two key elements of the reduced_df are the
-		#filename and evidx within that filename, used to re-index events to their origin. 
 
-		for infile in self.input_files:
-			print("Reducing file {}".format(infile))
+	def reduce_to_pulses(self):
 
-			#Evan removed a part here that allowed the user to give raw data to this function,
-			#doing the pre-reduction step. I do not want the user to have the flexibility to do this.
-			#it creates too much file handling and organizational issues that we don't want to be responsible for. 
-			#The user must (1) pre-reduce the raw data, then (2) reduce it with this class, and organize accordingly. 
+		
+		#create a reduced dictionary that has reduced quantities for all events. 
+		#this will be concatenated at the end of this file iteration to the self.reduced_df.
+		red_df = {} 
 
-			if(infile.split('.')[-1] == 'p'):
-				self.waveform_df = pickle.load(open(infile, 'rb'))[0]
+		#some operations, like baseline subtraction, are much better
+		#to perform on a numpy array as a vectorized operation. For that,
+		#we unpack this dataframe into a numpy array of shape 
+		#wavs[events][channels][samples].shape = (n_events, n_channels, n_samples)
+		wavs = np.array(self.waveform_df["Data"].to_list())
+		chidx_map = np.array(self.waveform_df["Channels"].to_list())[0]
 
+		#NOTE: tried to convert all wavs from ADC to ENC here so that all analysis operations
+		#are in ENC units from this point on. It took way way way too long for some reason... 
+		#possibly not the right vectorized syntax or something. This is why you see a bunch of 
+		#calls to that function down below. 
+
+		#baseline subtract the waveforms. This function
+		#will also extracts information related to baselines,
+		#like the std and means.
+		print("Subtracting baselines")
+		wavs, extracted = self.analyze_and_subtract_baselines(wavs)
+
+		#its also convenient here to get the full waveform stds 
+		print("Getting full STDs")
+		full_stds = np.std(wavs, axis=2) #for all events and all channels
+		#add the extracted info to our red_df
+		for chidx in range(len(wavs[0])):
+			#get the unique, ASIC-number agnostic channel ID
+			ch = chidx_map[chidx]
+			red_df["ch{:d} baseline".format(ch)] = Util.ADC_to_ENC(extracted["baselines"][:, chidx], self.config["gain"], self.config["pt"])
+			red_df["ch{:d} baseline_std".format(ch)] = Util.ADC_to_ENC(extracted["stds"][:, chidx], self.config["gain"], self.config["pt"])
+			red_df["ch{:d} full_std".format(ch)] = Util.ADC_to_ENC(full_stds[:, chidx], self.config["gain"], self.config["pt"])
+
+		#the min and max value of all channels can also be vectorized, and would
+		#be simple if not for the glitch pulses that we have to ignore/max certain
+		#regions for. So in the future, you can replace this with one line like np.max(wavs, axis=2)
+		#but for now, we have a special function that calls a utility. 
+		print("Analyzing minimums and maximums")
+		extracted = self.analyze_min_max(wavs)
+		#add the extracted info to our red_df
+		for chidx in range(len(wavs[0])):
+			#get the unique, ASIC-number agnostic channel ID
+			ch = chidx_map[chidx]
+			red_df["ch{:d} min".format(ch)] = Util.ADC_to_ENC(extracted["min"][:, chidx], self.config["gain"], self.config["pt"])
+			red_df["ch{:d} max".format(ch)] = Util.ADC_to_ENC(extracted["max"][:, chidx], self.config["gain"], self.config["pt"])
+
+
+
+		#add some global reduced quantities that are simple at this stage
+		red_df["filename"] = [self.infile]*len(self.waveform_df.index)
+		red_df["evidx"] = list(range(len(self.waveform_df.index)))
+		red_df["timestamp"] = self.waveform_df["Timestamp"].to_list()
+
+
+		red_df["pulses"] = [[] for i in range(len(self.waveform_df.index))]
+		print("Initializing pulses for events with any sample above positive threshold of {:d} sigma".format(self.config["coarse_threshold"]))
+		#do a np.where to find where any channel number is above threshold
+		mask = None
+		for chidx in range(len(wavs[0])):
+			ch = chidx_map[chidx]
+			if(not Util.is_channel_strip(self.chmap, ch)):
+				continue
+			maxs = red_df["ch{:d} max".format(ch)]
+			threshs = self.config["coarse_threshold"]*red_df["ch{:d} baseline_std".format(ch)]
+			if(mask is None):
+				mask = np.where(maxs > threshs, 1, 0)
+			#if a mask already exists, I want to OR it with the new mask
 			else:
-				print('Unrecognized file type .{0} given to data reducer. Please check file paths and try again.'.format(infile.split('.')[-1]))
-				return
-			
-			#create a reduced dictionary that has reduced quantities for all events. 
-			#this will be concatenated at the end of this file iteration to the self.reduced_df.
-			red_df = {} 
+				mask = np.where(maxs > threshs, 1, 0) | mask
+		
 
-			#some operations, like baseline subtraction, are much better
-			#to perform on a numpy array as a vectorized operation. For that,
-			#we unpack this dataframe into a numpy array of shape 
-			#wavs[events][channels][samples].shape = (n_events, n_channels, n_samples)
-			wavs = np.array(self.waveform_df["Data"].to_list())
-			chidx_map = np.array(self.waveform_df["Channels"].to_list())[0]
-
-			#convert all sample values from ADC to ENC
-			wavs = Util.ADC_to_ENC(wavs, self.config["gain"], self.config["pt"])
-
-			#baseline subtract the waveforms. This function
-			#will also extracts information related to baselines,
-			#like the std and means.
-			wavs, extracted = self.analyze_and_subtract_baselines(wavs)
-
-			#its also convenient here to get the full waveform stds 
-			full_stds = np.std(wavs, axis=2) #for all events and all channels
-			#add the extracted info to our red_df
+		#get red_ev indices that passed mask
+		red_ev_idxs = np.where(mask == 1)[0]
+		for ev_idx in red_ev_idxs:
+			#loop through all strip channels and initialize pulse objects
+			#for each channel that has a pulse above coarse threshold
 			for chidx in range(len(wavs[0])):
-				#get the unique, ASIC-number agnostic channel ID
 				ch = chidx_map[chidx]
-				red_df["ch{:d} baseline".format(ch)] = extracted["baselines"][:, chidx]
-				red_df["ch{:d} baseline_std".format(ch)] = extracted["stds"][:, chidx]
-				red_df["ch{:d} full_std".format(ch)] = full_stds[:, chidx]
-
-			#the min and max value of all channels can also be vectorized, and would
-			#be simple if not for the glitch pulses that we have to ignore/max certain
-			#regions for. So in the future, you can replace this with one line like np.max(wavs, axis=2)
-			#but for now, we have a special function that calls a utility. 
-			extracted = self.analyze_min_max(wavs)
-			#add the extracted info to our red_df
-			for chidx in range(len(wavs[0])):
-				#get the unique, ASIC-number agnostic channel ID
-				ch = chidx_map[chidx]
-				red_df["ch{:d} min".format(ch)] = extracted["min"][:, chidx]
-				red_df["ch{:d} max".format(ch)] = extracted["max"][:, chidx]
-
-
-
-			#add some global reduced quantities that are simple at this stage
-			#first, Glenn likes to use a filenum at the end of filenames, so save that as a quick variable
-			#in addition to saving the full filename
-			file_num = (((infile.split('/')[-1]).split('_')[-1]).split('.')[0])[4:]
-			red_df["filenum"] = [file_num]*len(self.waveform_df.index)
-			red_df["filename"] = [infile]*len(self.waveform_df.index)
-			red_df["evidx"] = list(range(len(self.waveform_df.index)))
-
-
-			#Begin reduction tasks that involve looping event by event. 
-			for evno, row in self.waveform_df.iterrows():
-				if(evno % 500 == 0): print("On event {:d} of {:d}".format(evno, len(self.waveform_df.index)))
+				if(not Util.is_channel_strip(self.chmap, ch)):
+					continue
 				
-				#get an empty event to fill in
-				red_ev = self.get_empty_event()
+				if(red_df["ch{:d} max".format(ch)][ev_idx] > self.config["coarse_threshold"]*red_df["ch{:d} baseline_std".format(ch)][ev_idx]):
+					p = Pulse.Pulse(self.rq_dict, self.config, wavs[ev_idx][chidx], ch)
+					red_df["pulses"][ev_idx].append(p)
 
-				#
+			#on a coarse level, we want to initialize pulse objects
+			#for channels spatially adjacent 
+			adjacent_pulses = []
+			for p in red_df["pulses"][ev_idx]:
+				#initialize the spatially adjacent pulses
+				ch = p.ch 
+				adj_chs = Util.get_adjacent_channels(self.chmap, ch, self.config["adjacency"])
+				for adj in adj_chs:
+					chidx = np.where(chidx_map == adj)[0][0]
+					adjacent_pulses.append(Pulse.Pulse(self.rq_dict, self.config, wavs[ev_idx][chidx], adj))
 
-				
-				self.reduced_df["filenum"].append(file_num)
-				self.reduced_df["evidx"].append(i)
-				self.reduced_df["timestamp"].append(row["Timestamp"])
+			red_df["pulses"][ev_idx] += adjacent_pulses
 
-				# To fill in the cluster and pulse reduced quantities we start from the 
-				# bottom and work our way up - identify pulses in the window and then
-				# fill in pulses and once that's done we group them together to fill
-				# in cluster information and then finally complete the relevent
-				# global information
 
-				# Temporarily writing to our temp column of pulses while we work on clustering algorithm
-				self.reduced_df["pulse"].append(self.find_pulses(i,row))
 
-				# As of this build, baseline data is by far the slowest, so we give the option to skip it for speed if desired
-				if not Skip_Baseline:
-					self.fill_in_baselines(row)
+		self.red_df = red_df #store the reduced dictionary for this file.
+		#later will be concatenated manually to the self.reduced_df.
 
 	#takes in a numpy array of all waves in a file. 
 	def analyze_and_subtract_baselines(self, wavs):
@@ -245,8 +266,8 @@ class DataReduction:
 		bl_window = [int(self.config["baseline"][0]*self.config["sampling_rate"]), int(self.config["baseline"][1]*self.config["sampling_rate"])]
 
 		#in a vectorized way, get the baselines and std values for all channels
-		baselines = np.apply_along_axis(Util.find_baseline_windowed, 2, wavs, bl_window)
-		stds = np.apply_along_axis(Util.find_baseline_stds_windowed, 2, wavs, bl_window)
+		baselines = np.median(wavs[:,:,bl_window[0]:bl_window[1]], axis=2)
+		stds = np.std(wavs[:,:,bl_window[0]:bl_window[1]], axis=2)
 		sub_wavs = wavs - baselines[:, :, np.newaxis]
 		return sub_wavs, {"baselines": baselines, "stds": stds}
 

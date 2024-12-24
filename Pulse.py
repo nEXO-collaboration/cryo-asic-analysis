@@ -1,11 +1,13 @@
 import numpy as np 
-from Utilities import ADC_to_ENC
+import Utilities as Util
 
 
 class Pulse:
     #initialize the pulse with its reduced quantities which
     #should be parsed externally (by the instantiator) from a yaml file
-    def __init__(self, rqs, config):
+    #config is the config dict, no file parsing needed, as this will always
+    #come from something that has already parsed the config. 
+    def __init__(self, rqs, config, wav, ch):
 
         self.rqs = rqs
         self.d = {}
@@ -14,6 +16,12 @@ class Pulse:
         #defines RQs. 
         for key in self.rqs:
             self.d[key] = self.rqs[key]
+
+        self.config = config #already a dict
+
+
+        self.ch = ch
+        self.wav = wav
 
 
     #populate the reduced quantities with the default values
