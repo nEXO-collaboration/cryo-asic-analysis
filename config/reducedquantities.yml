@@ -22,6 +22,7 @@ global:
   clusters: [] #is a list of clusters in the event, each with the datastructure defined below.
   pulses: [] #is a list of all pulses found in the event. 
   n_clusters: None #is the number of clusters in the event, for quick cuts using pd masks
+  n_pulses: None #is the number of pulses in the event, for quick cuts using pd masks
   total_charge: None #is the total charge in the event, in fC, summing all analyzed clusters 
   x: None #is the x position of the event, in mm, determined from the cluster with the highest charge
   y: None #is the y position of the event, in mm, determined from the cluster with the highest charge

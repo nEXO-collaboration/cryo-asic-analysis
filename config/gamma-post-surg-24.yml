@@ -27,6 +27,8 @@ ignore_regions: [[0, 50], [980, 1050]]
 #of these are for different coarse stages of pulse analysis. 
 coarse_threshold: 6 #used as coarse way of ignoring channels that don't have large pulses on them
 adjacency: 2 #how many adjacent channels (N on each side) to include relative to a channel with a pulse that passes coarse threshold
+coarse_integral_window: 10 #microseconds, for rolling integration pulse finder
+integral_threshold: 200 #ENC*us, for finding peaks in rolling integral waveform
 
 
 #This is used to identify whether the 0-31/32-63 

@@ -109,6 +109,38 @@ def get_adjacent_channels(chmap, ch, N):
     return adj
 
 
+def simple_1d_clustering(data, cluster_spacing):
+    """
+    Find clusters in a 1D list of integers based on a specified cluster spacing.
+
+    Parameters:
+    - data: list of int or floats
+        The 1D list of values to find clusters
+    - cluster_spacing: int
+        The maximum spacing allowed between consecutive integers in a cluster.
+
+    Returns:
+    - clusters: list of lists
+        A list of clusters, where each cluster is a list of the values. 
+    """
+    if not data:
+        return []  # Handle empty input
+    
+    # Sort the data to ensure clustering works
+    data = sorted(data)
+    
+    # Initialize clusters
+    clusters = [[data[0]]]  # Start with the first element in a cluster
+    
+    for num in data[1:]:
+        # Check if the current number is within the cluster_spacing of the last cluster
+        if num - clusters[-1][-1] <= cluster_spacing:
+            clusters[-1].append(num)  # Add to the current cluster
+        else:
+            clusters.append([num])  # Start a new cluster
+    
+    return clusters
+
 #FYI - for other calculations. 
 #(x1, x1.5, x3, x6) is {1: 9.6, 1.5: 14.3, 3:28.6, 6:57.2} mV/fC
 @np.vectorize

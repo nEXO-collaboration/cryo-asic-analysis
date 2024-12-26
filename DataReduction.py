@@ -6,6 +6,7 @@ from scipy.signal import find_peaks
 import pickle
 import Utilities as Util
 import Pulse
+import matplotlib.pyplot as plt
 import sys
 
 class DataReduction:
@@ -212,6 +213,7 @@ class DataReduction:
 
 
 		red_df["pulses"] = [[] for i in range(len(self.waveform_df.index))]
+		red_df["n_pulses"] = []
 		print("Initializing pulses for events with any sample above positive threshold of {:d} sigma".format(self.config["coarse_threshold"]))
 		#do a np.where to find where any channel number is above threshold
 		mask = None
@@ -254,11 +256,78 @@ class DataReduction:
 					adjacent_pulses.append(Pulse.Pulse(self.rq_dict, self.config, wavs[ev_idx][chidx], adj))
 
 			red_df["pulses"][ev_idx] += adjacent_pulses
-
-
+			red_df["n_pulses"].append(len(red_df["pulses"][ev_idx]))
 
 		self.red_df = red_df #store the reduced dictionary for this file.
 		#later will be concatenated manually to the self.reduced_df.
+
+
+	#does waveform level analysis on pulse objects, 
+	#vetting them to either remove if they are meaningless
+	#or calculate reduced quantities like energy and such. 
+	def process_pulses(self):
+
+		#get events that have non-zero length of pulse objects
+		red_ev_idxs = np.where(np.array(self.red_df["n_pulses"]) > 0)[0]
+		print("Got {:d} events with pulses".format(len(red_ev_idxs)))
+		#loop through all events that have pulses
+		for ev_idx in red_ev_idxs:
+			#Create time series of a coarse rolling
+			#integral of the pulses. 
+			pulses = self.red_df["pulses"][ev_idx]
+			new_pulses = []
+			for i, p in enumerate(pulses):
+				#populates an integral self attribute in the pulses. 
+				p.rolling_integral(window=self.config["coarse_integral_window"])
+				#find all peaks in the integral that pass thresholds
+				potential_pulses = []
+				pass_integ_thresh = np.where(np.array(p.integ) > self.config["integral_threshold"])[0]
+				pass_integ_thresh_idxs = np.array(p.integ_idx)[pass_integ_thresh] + p.idx_start
+				pass_integ_thresh_times = pass_integ_thresh_idxs/self.config["sampling_rate"]
+				#mask out glitch regions
+				for k, _t in enumerate(pass_integ_thresh_times):
+					keep = True
+					for ign in self.config["ignore_regions"]:
+						if(ign[0] <= _t <= ign[1]):
+							keep = False
+					if(keep):
+						potential_pulses.append(pass_integ_thresh[k])
+
+				#if no samples are outside of the masked regions,
+				#just continue. 
+				if(len(potential_pulses) == 0):
+					continue
+
+				#otherwise, cluster the 1D timeseries to find possibility
+				#of multiple peaks that pass threshold. Require at least
+				#2 half window of the coarse_integral_window between pulses
+				clusters = Util.simple_1d_clustering(potential_pulses, 2)
+
+				for clust in clusters:
+					#add this full pulse to the new_pulses list, containing
+					#only the waveform data that is relevant to this pulse.
+					
+					#add half a window to the start and end of the pulse as determined
+					#by the indices that pass threshold for the integral series. 
+					buffer = self.config["coarse_integral_window"]*self.config["sampling_rate"]
+					#get indexes of the waveform that correspond to the start and
+					#end of this region of the integral window. 
+					start = int(p.integ_idx[clust[0]] + p.idx_start - buffer)
+					end = int(p.integ_idx[clust[-1]] + p.idx_start + buffer)
+					new_pulses.append(Pulse.Pulse(self.rq_dict, self.config, p.wav[start:end], p.ch, idx_start=start))
+					fig, ax = plt.subplots()
+					ax.plot(range(p.idx_start, p.idx_start + len(p.wav)), p.wav)
+					ax.plot(range(start, end), new_pulses[-1].wav)
+					plt.show()
+
+					
+
+
+			
+
+
+
+
 
 	#takes in a numpy array of all waves in a file. 
 	def analyze_and_subtract_baselines(self, wavs):
