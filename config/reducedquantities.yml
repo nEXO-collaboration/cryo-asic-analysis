@@ -60,10 +60,14 @@ cluster:
 
 #embedded as keys or attributes of the Pulse class
 pulse: 
-  #best reconstruction of the charge of the pulse in fC, using the gain and ADC conversion
-  q_collection: None
-  #best reconstruction of the "charge" sensed as fit by a model that assumes the shape of induction waveforms, where charge is not collected
-  q_induction: None 
+  #integrate the pulse only positive component above a precise baseline
+  pos_integral: None
+  #integrate the pulse only negative component above a precise baseline
+  neg_integral: None 
+  #combined integral positive and negative
+  integral: None
+  #polarity of the pulse, 1 for positive, -1 for negative
+  polarity: None
   #the maximum of the pulse, in ADC 
   max: None 
   #the minimum (for induction swing) in ADC 
@@ -74,8 +78,10 @@ pulse:
   tmin: None
   #the arrival time of the pulse (as defined in the algorithm) in microseconds
   t_arrival: None
-  #the width of the waveform in microseconds
-  width: None
   #channel of this pulse 
   channel: None
+  #the width of the pulse, in microseconds
+  width: None
+  #asymmetry of the pulse in microseconds
+  asymmetry: None
 

@@ -1,6 +1,8 @@
 import numpy as np 
 import Utilities as Util
 import matplotlib.pyplot as plt 
+from scipy.signal import find_peaks
+import sys
 
 
 class Pulse:
@@ -35,6 +37,146 @@ class Pulse:
         self.integ_idx = [] #rolling integral sample numbers
 
 
+    #a simple peak finder that ignores masked regions. 
+    #It finds peaks of both polarities. 
+    def find_peaks(self, width=None, thresh=None):
+        if(thresh == None):
+            #get a quick baseline noise estimate
+            bl_window = [int(self.config["baseline"][0]*self.config["sampling_rate"]), int(self.config["baseline"][1]*self.config["sampling_rate"])]
+            std = np.std(self.wav[bl_window[0]:bl_window[1]])
+            thresh = self.config["high_threshold"]*std
+        if(width == None):
+            width = int(self.config["pt"]*self.config["sampling_rate"]) + 1
+
+        thresh = float(thresh) #comes in as ndarray secretly 
+        width = int(width) #comes in as ndarray secretly
+        distance = width*3
+
+        #collective for both polarities
+        all_pulses = []
+        all_properties = {}
+        #POSITIVE POLARITY
+        temp_pulses, properties = find_peaks(self.wav, height=thresh, prominence=thresh, distance=distance, wlen=width)
+
+        #remove any peaks that are in the masked region
+        igs_us = self.config["ignore_regions"]
+        igs_s = [[int(ig[0]*self.config["sampling_rate"]), int(ig[1]*self.config["sampling_rate"])] for ig in igs_us]
+        masked_pulses = []
+        masked_properties = {}
+        for key in properties:
+            masked_properties[key] = []
+
+        
+        for i, tp in enumerate(temp_pulses):
+            mask = False
+            for ig in igs_s:
+                if(tp > ig[0] and tp < ig[1]):
+                    mask = True
+            if(mask == False):
+                masked_pulses.append(tp)
+                for key in properties:
+                    masked_properties[key].append(properties[key][i])
+    
+
+        #add a few properties to this dict that are not returned by find_peaks
+        #first, the number of samples above threshold surrounding the peak
+        masked_properties["widths"] = []
+        masked_properties["left_crossing"] = []
+        masked_properties["right_crossing"] = []
+        for i, tp in enumerate(masked_pulses):
+            j = tp
+            k = tp
+            while(self.wav[j] > thresh):
+                j += 1
+                if(j >= len(self.wav)):
+                    break
+            j -= 1 #make sure not to count the sample that is below thres
+            while(self.wav[k] > thresh):
+                k -= 1
+                if(k < 0):
+                    break
+            k += 1 #make sure not to count the sample that is below thres
+            masked_properties["widths"].append(j - k)
+            masked_properties["left_crossing"].append(k)
+            masked_properties["right_crossing"].append(j)
+
+
+        #update the collection before moving to negative polarity
+        for key in masked_properties:
+            all_properties[key] = masked_properties[key]
+        all_pulses = masked_pulses
+
+        #NEGATIVE POLARITY
+        temp_pulses, properties = find_peaks(-1*np.array(self.wav), height=thresh, prominence=thresh, distance=distance, wlen=width)
+
+        #remove any peaks that are in the masked region
+        igs_us = self.config["ignore_regions"]
+        igs_s = [[int(ig[0]*self.config["sampling_rate"]), int(ig[1]*self.config["sampling_rate"])] for ig in igs_us]
+        masked_pulses = []
+        masked_properties = {}
+        for key in properties:
+            masked_properties[key] = []
+
+        
+        for i, tp in enumerate(temp_pulses):
+            mask = False
+            for ig in igs_s:
+                if(tp > ig[0] and tp < ig[1]):
+                    mask = True
+            if(mask == False):
+                masked_pulses.append(tp)
+                for key in properties:
+                    masked_properties[key].append(properties[key][i])
+    
+
+        #add a few properties to this dict that are not returned by find_peaks
+        #first, the number of samples above threshold surrounding the peak
+        masked_properties["widths"] = []
+        masked_properties["left_crossing"] = []
+        masked_properties["right_crossing"] = []
+        for i, tp in enumerate(masked_pulses):
+            j = tp
+            k = tp
+            while(self.wav[j] < thresh):
+                j += 1
+                if(j >= len(self.wav)):
+                    break
+            j -= 1 #make sure not to count the sample that is below thres
+            while(self.wav[k] < thresh):
+                k -= 1
+                if(k < 0):
+                    break
+            k += 1 #make sure not to count the sample that is below thres
+            masked_properties["widths"].append(j - k)
+            masked_properties["left_crossing"].append(k)
+            masked_properties["right_crossing"].append(j)
+
+        #update the collection before moving to negative polarity
+        for key in masked_properties:
+            all_properties[key] += masked_properties[key]
+        all_pulses += masked_pulses
+
+
+        #for debugging
+        """
+        if(len(masked_pulses) > 0):
+            tp = masked_pulses[0]
+            fig, ax = plt.subplots()
+            ax.plot(self.wav, 'ko-')
+            ax.axhline(y=thresh, color='r')
+            ax.axhline(y=-1*thresh, color='r')
+            ax.scatter(masked_pulses, self.wav[masked_pulses], s=200)
+            ax.set_xlim([min(masked_pulses) - 50, max(masked_pulses) + 50])
+            plt.show()
+        """
+        
+        
+        return all_pulses, all_properties
+
+        
+
+        
+
     #performs a windowed integral that rolls over the waveform.
     #populates self attributes that store that info but gets deleted
     #at the end of pulse processing. Window is in microseconds.
@@ -56,33 +198,103 @@ class Pulse:
 
         self.integ = integ
         self.integ_idx = window_idxs
+
+
+        
+
+    #the main processing function after initial vetting of pulse properties. 
+    #At this stage, usually the pulses are short and isolated, do not overlap
+    #with ignore regions, and are not single data point glitches.
+    def calculate_reduced_quantities(self):
+        #find polarity, max, and min of the pulse
+        self.d["max"] = Util.ADC_to_ENC(np.max(self.wav), self.config["gain"], self.config["pt"])
+        self.d["min"] = Util.ADC_to_ENC(np.min(self.wav), self.config["gain"], self.config["pt"])
+        if(abs(self.d["max"]) > abs(self.d["min"])):
+            self.d["polarity"] = 1
+        else:
+            self.d["polarity"] = -1
+        
+        #find the time of the max and min
+        max_idx = np.argmax(self.wav)
+        min_idx = np.argmin(self.wav)
+        #in absolute time relative to the original full waveform buffer
+        self.d["tmax"] = (max_idx + self.idx_start)/self.config["sampling_rate"]
+        self.d["tmin"] = (min_idx + self.idx_start)/self.config["sampling_rate"]
+
+        #find the precise baseline leading up to the pulse. 
+        #uses first 25% of this truncated pulse waveform 
+        baseline = np.mean(self.wav[:int(0.25*len(self.wav))])
+        #baseline subtract
+        self.wav = self.wav - baseline
+        
+        #find the integral of the pulse using this peak time
+        #and integrating over a specified asymmetric window.
+        #We will calculate the positive and negative integrals
+        #relative to baseline. 
+        integ_window_us = self.config["integ_window"]
+        integ_window_s = [int(integ_window_us[0] * self.config["sampling_rate"]), int(integ_window_us[1] * self.config["sampling_rate"])]
+        integ_wave = self.wav[max_idx + integ_window_s[0]:max_idx + integ_window_s[1]]
+        #positive integral
+        #set all negative values to 0
+        integ_wave_p = integ_wave.copy() 
+        integ_wave_p[integ_wave_p < 0] = 0
+        self.d["pos_integral"] = np.trapz(y = integ_wave_p, dx = 1/self.config["sampling_rate"])
+        self.d["pos_integral"] = Util.ADC_to_ENC(self.d["pos_integral"], self.config["gain"], self.config["pt"])
+        #negative integral
+        #set all positive values to 0
+        integ_wave_n = integ_wave.copy()
+        integ_wave_n[integ_wave_n > 0] = 0
+        self.d["neg_integral"] = np.trapz(y = integ_wave_n, dx = 1/self.config["sampling_rate"])
+        self.d["neg_integral"] = Util.ADC_to_ENC(self.d["neg_integral"], self.config["gain"], self.config["pt"])
+        #combined
+        self.d["integral"] = self.d["pos_integral"] + self.d["neg_integral"]
+        
+        #channel
+        self.d["channel"] = self.ch
+
+        #calculate the arrival time based on a constant fraction discriminator
+        #method. Also do the same to calculate the width. 
+        f_a = self.config["cfd_arrival"]
+        f_w = self.config["cfd_width"]
+        wav_pol = np.array(self.wav)*self.d["polarity"]
+        thr_a = f_a*np.max(wav_pol)
+        thr_w = f_w*np.max(wav_pol)
+        #find the threshold crossing for arrival
+        for i, samp in enumerate(wav_pol):
+            if(samp > thr_a):
+                self.d["t_arrival"] = (i + self.idx_start)/self.config["sampling_rate"]
+                break
+        #find the threshold crossing on both sides for the width
+        i = np.argmax(wav_pol)
+        j = k = i 
+        while(wav_pol[j] > thr_w):
+            j += 1
+            if(j >= len(wav_pol)):
+                break
+        while(wav_pol[k] > thr_w):
+            k -= 1
+            if(k < 0):
+                break
+        #make sure the sample after the threshold is not counted
+        j -= 1
+        k += 1
+        self.d["width"] = (j - k)/self.config["sampling_rate"]
+        if(self.d["width"] == 0):
+            self.d["asymmetry"] = 0
+        else:
+            self.d["asymmetry"] = (j - i)/(j - k)/self.config["sampling_rate"]
+    
+
+    #for debugging
+    def plot_pulse(self):
         fig, ax = plt.subplots()
-        ax.plot(self.integ_idx, self.integ)
+        ax2 = ax.twiny()
+        ax.plot(self.wav, 'ko-')
+        ax2.plot(range(self.idx_start, self.idx_start + len(self.wav)), self.wav, 'ko-')
+        print(self.d)
         plt.show()
+
+
+
+
         
-
-    #populate the reduced quantities with the default values
-    def populate_rqs(self, config, wvfm, i, params):
-
-        l_edge = params["left_ips"][i] - params["widths"][i]/2
-        r_edge = params["right_ips"][i] + 2*config["pt"]*config["sampling_rate"] # Adding two samples to the right edge to ensure the right edge is included in the sum
-
-        l_samp = int(l_edge*config["sampling_rate"]) # Left and right edge in samples for ease of use below
-        r_samp = int(r_edge*config["sampling_rate"])
-        
-        p = np.argmax(wvfm[l_samp:r_samp])+l_samp 
-
-        self.d["tmax"] = p / config["sampling_rate"] # Note the different units from p
-        self.d["width"] = params["widths"][i] / config["sampling_rate"] # Getting width in units of samples->us taking the default width at half prominence 
-        self.d["max"] = params["peak_heights"][i] 
-        self.d["min"] = np.min(wvfm[l_samp:r_samp])  
-        self.d["tmin"] = (np.argmin(wvfm[l_samp:r_samp])+l_samp) / config["sampling_rate"] 
-
-        self.d["t_arrival"] = self.d["tmax"] # For now without light, we'll just take arrival time to be the collection time, but could imagine later making this be drift time
-
-
-        #self.d["q_collection"] = optimum_filter(p, wvfm) # This is where one could imagine eventually implimenting an optimum filter analysis
-        #self.d["q_collection"] = self.Trap(l_edge, r_edge, wvfm, G=config[r_edge-l_edge], L = config["pt"]) Or maybe a trapazoid filter 
-        self.d["q_collection"] = ADC_to_ENC(np.trapz(y = wvfm[l_samp:r_samp], dx = 1/config["sampling_rate"])) # For now just integrate the waveform in the region of the pulse
-        self.d["q_induction"] = ADC_to_ENC(np.trapz(y = wvfm[p+int(config["pt"]*config["sampling_rate"]):r_samp], dx = 1/config["sampling_rate"])) # Integrate the waveform after the pulse
-

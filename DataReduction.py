@@ -213,16 +213,18 @@ class DataReduction:
 
 
 		red_df["pulses"] = [[] for i in range(len(self.waveform_df.index))]
-		red_df["n_pulses"] = []
-		print("Initializing pulses for events with any sample above positive threshold of {:d} sigma".format(self.config["coarse_threshold"]))
+		red_df["n_pulses"] = np.zeros(len(self.waveform_df.index))
+		print("Initializing pulses for events with any sample above positive threshold of {:0.2f} sigma".format(self.config["low_threshold"]))
 		#do a np.where to find where any channel number is above threshold
 		mask = None
 		for chidx in range(len(wavs[0])):
 			ch = chidx_map[chidx]
 			if(not Util.is_channel_strip(self.chmap, ch)):
 				continue
+			if(ch in self.config["dead_channels"]):
+				continue 
 			maxs = red_df["ch{:d} max".format(ch)]
-			threshs = self.config["coarse_threshold"]*red_df["ch{:d} baseline_std".format(ch)]
+			threshs = self.config["low_threshold"]*red_df["ch{:d} baseline_std".format(ch)]
 			if(mask is None):
 				mask = np.where(maxs > threshs, 1, 0)
 			#if a mask already exists, I want to OR it with the new mask
@@ -233,30 +235,38 @@ class DataReduction:
 		#get red_ev indices that passed mask
 		red_ev_idxs = np.where(mask == 1)[0]
 		for ev_idx in red_ev_idxs:
+			temp_pulse_channels = [] #list of pulse objects that will be edited 
 			#loop through all strip channels and initialize pulse objects
-			#for each channel that has a pulse above coarse threshold
+			#for each channel that has a pulse above a wide acceptance threshold
 			for chidx in range(len(wavs[0])):
 				ch = chidx_map[chidx]
 				if(not Util.is_channel_strip(self.chmap, ch)):
 					continue
+				if(ch in self.config["dead_channels"]):
+					continue 
 				
-				if(red_df["ch{:d} max".format(ch)][ev_idx] > self.config["coarse_threshold"]*red_df["ch{:d} baseline_std".format(ch)][ev_idx]):
-					p = Pulse.Pulse(self.rq_dict, self.config, wavs[ev_idx][chidx], ch)
-					red_df["pulses"][ev_idx].append(p)
+				if(red_df["ch{:d} max".format(ch)][ev_idx] > self.config["low_threshold"]*red_df["ch{:d} baseline_std".format(ch)][ev_idx]):
+					temp_pulse_channels.append(ch)
 
-			#on a coarse level, we want to initialize pulse objects
+			#we want to initialize pulse objects
 			#for channels spatially adjacent 
-			adjacent_pulses = []
-			for p in red_df["pulses"][ev_idx]:
+			set_adjacent_chs = [] #to avoid double counting
+			for ch in temp_pulse_channels:
 				#initialize the spatially adjacent pulses
-				ch = p.ch 
 				adj_chs = Util.get_adjacent_channels(self.chmap, ch, self.config["adjacency"])
 				for adj in adj_chs:
-					chidx = np.where(chidx_map == adj)[0][0]
-					adjacent_pulses.append(Pulse.Pulse(self.rq_dict, self.config, wavs[ev_idx][chidx], adj))
+					if(adj in self.config["dead_channels"]):
+						continue
+					set_adjacent_chs.append(adj)
+			
+			adj_chs = list(set(set_adjacent_chs))
+			all_chs = temp_pulse_channels + adj_chs
+			all_chs = list(set(all_chs))
+			for adj in all_chs:
+				chidx = np.where(chidx_map == adj)[0][0]
+				red_df["pulses"][ev_idx].append(Pulse.Pulse(self.rq_dict["pulse"], self.config, wavs[ev_idx][chidx], adj))
 
-			red_df["pulses"][ev_idx] += adjacent_pulses
-			red_df["n_pulses"].append(len(red_df["pulses"][ev_idx]))
+			red_df["n_pulses"][ev_idx] = (len(red_df["pulses"][ev_idx]))
 
 		self.red_df = red_df #store the reduced dictionary for this file.
 		#later will be concatenated manually to the self.reduced_df.
@@ -266,68 +276,55 @@ class DataReduction:
 	#vetting them to either remove if they are meaningless
 	#or calculate reduced quantities like energy and such. 
 	def process_pulses(self):
-
 		#get events that have non-zero length of pulse objects
 		red_ev_idxs = np.where(np.array(self.red_df["n_pulses"]) > 0)[0]
 		print("Got {:d} events with pulses".format(len(red_ev_idxs)))
-		#loop through all events that have pulses
+
+		#First, re-buffer pulses into small chunks that
+		#(1) separate multiple pulses from one channel in one event waveform
+		#(2) reject pulses that single data point glitches
+		print("Rejecting single data point glitches and buffering pulses")
 		for ev_idx in red_ev_idxs:
-			#Create time series of a coarse rolling
-			#integral of the pulses. 
 			pulses = self.red_df["pulses"][ev_idx]
 			new_pulses = []
-			for i, p in enumerate(pulses):
-				#populates an integral self attribute in the pulses. 
-				p.rolling_integral(window=self.config["coarse_integral_window"])
-				#find all peaks in the integral that pass thresholds
-				potential_pulses = []
-				pass_integ_thresh = np.where(np.array(p.integ) > self.config["integral_threshold"])[0]
-				pass_integ_thresh_idxs = np.array(p.integ_idx)[pass_integ_thresh] + p.idx_start
-				pass_integ_thresh_times = pass_integ_thresh_idxs/self.config["sampling_rate"]
-				#mask out glitch regions
-				for k, _t in enumerate(pass_integ_thresh_times):
-					keep = True
-					for ign in self.config["ignore_regions"]:
-						if(ign[0] <= _t <= ign[1]):
-							keep = False
-					if(keep):
-						potential_pulses.append(pass_integ_thresh[k])
 
-				#if no samples are outside of the masked regions,
-				#just continue. 
-				if(len(potential_pulses) == 0):
+			for i, p in enumerate(pulses):
+				ch = p.ch
+				#get std of the baseline for this channel
+				std = self.red_df["ch{:d} baseline_std".format(ch)][ev_idx]
+				thresh = self.config["low_threshold"]*std
+				#the waveform is in ADC and this thresh is in ENC, so this is the most efficeint way of calculating
+				thresh = Util.ENC_to_ADC(thresh, self.config["gain"], self.config["pt"])
+				#ignore-region pulses are considered in the p.find_peaks function. 
+				temp_pulses, properties = p.find_peaks(width=self.config["pt"], thresh=thresh)
+				if(len(temp_pulses) == 0):
 					continue
 
-				#otherwise, cluster the 1D timeseries to find possibility
-				#of multiple peaks that pass threshold. Require at least
-				#2 half window of the coarse_integral_window between pulses
-				clusters = Util.simple_1d_clustering(potential_pulses, 2)
+				for j, tp in enumerate(temp_pulses):
+					#reject single-data point glitches due to data corruption
+					if(properties["widths"][j] == 0):
+						continue
 
-				for clust in clusters:
-					#add this full pulse to the new_pulses list, containing
-					#only the waveform data that is relevant to this pulse.
-					
-					#add half a window to the start and end of the pulse as determined
-					#by the indices that pass threshold for the integral series. 
-					buffer = self.config["coarse_integral_window"]*self.config["sampling_rate"]
-					#get indexes of the waveform that correspond to the start and
-					#end of this region of the integral window. 
-					start = int(p.integ_idx[clust[0]] + p.idx_start - buffer)
-					end = int(p.integ_idx[clust[-1]] + p.idx_start + buffer)
-					new_pulses.append(Pulse.Pulse(self.rq_dict, self.config, p.wav[start:end], p.ch, idx_start=start))
-					fig, ax = plt.subplots()
-					ax.plot(range(p.idx_start, p.idx_start + len(p.wav)), p.wav)
-					ax.plot(range(start, end), new_pulses[-1].wav)
-					plt.show()
+					#isolate this pulse from the waveform and store it in a new pulse object. 
+					#this is so that we can analyze the pulse in isolation.
+					window = [tp - int(self.config["pulse_window"]*self.config["sampling_rate"]/2), tp + int(self.config["pulse_window"]*self.config["sampling_rate"]/2)]
+					newP = Pulse.Pulse(self.rq_dict["pulse"], self.config, p.wav[window[0]:window[1]], ch, idx_start=window[0])
+					new_pulses.append(newP)
+				
+			self.red_df["pulses"][ev_idx] = new_pulses
+			self.red_df["n_pulses"][ev_idx] = len(new_pulses)
 
-					
-
-
-			
+		#Calculate all reduced quantities for the pulses
+		red_ev_idxs = np.where(np.array(self.red_df["n_pulses"]) > 0)[0]
+		print("Calculating reduced quantities for pulses from {:d} remaining events".format(len(red_ev_idxs)))
+		for ev_idx in red_ev_idxs:
+			for p in self.red_df["pulses"][ev_idx]:
+				p.calculate_reduced_quantities()
 
 
 
-
+	def process_clusters():
+		
 
 	#takes in a numpy array of all waves in a file. 
 	def analyze_and_subtract_baselines(self, wavs):
@@ -358,45 +355,3 @@ class DataReduction:
 		masked_waves_max = np.where(mask, wavs, -1*np.inf) #np -inf will replace masked values, so a minimum function ignores them
 
 		return {"min": np.min(masked_waves_min, axis=2), "max": np.max(masked_waves_max, axis=2)}
-
-	def find_pulses(self, event, row, n_sigma=4, width=30):
-
-
-		pulse_df = {}
-		
-		# Checking to see if user has given a custom threshold value
-		if n_sigma is None:
-			n_sigma = self.config["pulse_threshold"]
-
-		for ch in row["Channels"]:
-
-			# Note we skip dummy channels for the actual event anlaysis too
-			if not is_channel_strip(self.chmap, ch):
-				continue
-
-			wvfm = row["Data"][ch]
-			temp_pulses, params = find_peaks(wvfm, width=self.config["pt"], height = n_sigma*np.std(wvfm)+np.mean(wvfm), wlen=width)
-			pulses = []
-			
-			for p in temp_pulses:
-				
-				#this is because at the time of writing, we did not know how to remove the glitch pulses
-				#that are injected as leakage currents by the internal calibration pulser. 
-				if not (any(window[0] <= p <= window[1] for window in self.config["ignore_regions"])):
-					pulses.append(p)
-
-			for i, peak in enumerate(pulses):
-
-				## Taking a convention where each pulse will be listed as "Pulse {event}-{pulse number within the event}"
-				pulse_df["Pulse {0}-{1}".format(event, i)] = Pulse.Pulse(self.config, self.rq_dict["pulse"], wvfm, i, params).d
-				(pulse_df["Pulse {0}-{1}".format(event, i)])["channel"] = ch
-
-		return pulse_df
-
-
-
-
-
-			
-	
-		

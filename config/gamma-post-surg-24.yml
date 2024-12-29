@@ -25,11 +25,16 @@ ignore_regions: [[0, 50], [980, 1050]]
 #in multiples of the standard deviation of baseline. 
 #Some sublter algorithms may use different thresholds, some
 #of these are for different coarse stages of pulse analysis. 
-coarse_threshold: 6 #used as coarse way of ignoring channels that don't have large pulses on them
+high_threshold: 5 #very robust against noise, finding significant channels
+low_threshold: 3.5
 adjacency: 2 #how many adjacent channels (N on each side) to include relative to a channel with a pulse that passes coarse threshold
-coarse_integral_window: 10 #microseconds, for rolling integration pulse finder
-integral_threshold: 200 #ENC*us, for finding peaks in rolling integral waveform
-
+#in pulse processing, we separate individual pulses
+#which may be in the same event buffer on the same channel. this is the width
+#of the window that we use to isolate a pulse, and analyze it fully
+pulse_window: 30 #microseconds
+integ_window: [-3, 3] #microseconds relative to the peak of the pulse
+cfd_arrival: 0.5 #fraction of the pulse height where the arrival time of a pulse is calculated
+cfd_width: 0.2 #fraction of the pulse height where the width of the pulse is calculated
 
 #This is used to identify whether the 0-31/32-63 
 #channels have been swapped due to a high speed 
@@ -37,4 +42,4 @@ integral_threshold: 200 #ENC*us, for finding peaks in rolling integral waveform
 #It has not been used in a while... 
 key_channel: None 
 
-dead_channels: [] #Any channels you want to selectively ignore from some analyses
+dead_channels: [62] #Any channels you want to selectively ignore from some analyses
