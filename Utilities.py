@@ -122,24 +122,30 @@ def simple_1d_clustering(data, cluster_spacing):
     Returns:
     - clusters: list of lists
         A list of clusters, where each cluster is a list of the values. 
+    - indices: list of lists
+        A list of clusters, where each cluster is a list of the indices of the values in the original data.
     """
-    if not data:
-        return []  # Handle empty input
+    if(len(data) == 0):
+        return [], []
     
-    # Sort the data to ensure clustering works
+    # Sort the data to ensure clustering works, saving indices
     data = sorted(data)
+    indices = sorted(range(len(data)), key=lambda x: data[x])
     
     # Initialize clusters
     clusters = [[data[0]]]  # Start with the first element in a cluster
-    
-    for num in data[1:]:
+    ind_clusters = [[indices[0]]]
+
+    for i, num in enumerate(data[1:]):
         # Check if the current number is within the cluster_spacing of the last cluster
         if num - clusters[-1][-1] <= cluster_spacing:
             clusters[-1].append(num)  # Add to the current cluster
+            ind_clusters[-1].append(indices[i+1])
         else:
             clusters.append([num])  # Start a new cluster
+            ind_clusters.append([indices[i+1]])
     
-    return clusters
+    return clusters, ind_clusters
 
 #FYI - for other calculations. 
 #(x1, x1.5, x3, x6) is {1: 9.6, 1.5: 14.3, 3:28.6, 6:57.2} mV/fC

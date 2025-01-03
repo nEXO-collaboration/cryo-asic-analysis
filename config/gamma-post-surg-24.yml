@@ -26,7 +26,7 @@ ignore_regions: [[0, 50], [980, 1050]]
 #Some sublter algorithms may use different thresholds, some
 #of these are for different coarse stages of pulse analysis. 
 high_threshold: 5 #very robust against noise, finding significant channels
-low_threshold: 3.5
+low_threshold: 3
 adjacency: 2 #how many adjacent channels (N on each side) to include relative to a channel with a pulse that passes coarse threshold
 #in pulse processing, we separate individual pulses
 #which may be in the same event buffer on the same channel. this is the width
@@ -35,6 +35,10 @@ pulse_window: 30 #microseconds
 integ_window: [-3, 3] #microseconds relative to the peak of the pulse
 cfd_arrival: 0.5 #fraction of the pulse height where the arrival time of a pulse is calculated
 cfd_width: 0.2 #fraction of the pulse height where the width of the pulse is calculated
+
+#clustering parameters
+clust_time_sep: 2 #microseconds, the maximum time separation between pulses in a cluster
+clust_space_sep: 8 #mm, the maximum space separation between pulses in a cluster
 
 #This is used to identify whether the 0-31/32-63 
 #channels have been swapped due to a high speed 
