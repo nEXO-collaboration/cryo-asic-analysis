@@ -13,32 +13,34 @@ def Get_File_Name(file_path):
   return file_name
 
 
-def Convert_Files(data_path, pickle_path, reload_all = False):
+def Convert_Files(input_globstring, output_path, config_filepath, reload_all=True):
 
-  dat_files = glob.glob(data_path + "*.dat")
-  pickle_files = glob.glob(pickle_path + "*.p")
+
+  dat_files = glob.glob(input_globstring +"*.dat")
+  pickle_files = glob.glob(output_path + "*.p")
   pickle_names = [Get_File_Name(p) for p in pickle_files]
 
-  for dat in dat_files:
-    
-    dat_name = Get_File_Name(dat)
+  #check if output directory exists
+  if not os.path.isdir(output_path): os.mkdir(output_path)
 
+  for dat in dat_files:
+    dat_name = Get_File_Name(dat)
     if (dat_name not in pickle_names) or (reload_all==True):
       cf = CryoAsicFile.CryoAsicFile(dat, config_filepath)
       cf.load_raw_data()
       cf.group_into_pandas()
-      outfile_name = pickle_path + dat_name + '.p'
-      try: cf.pickle_dump_waveform_df(outfile_name)
-      except:
-        os.mkdir(pickle_path)
-        cf.pickle_dump_waveform_df(outfile_name)
-
+      outfile_name = output_path + dat_name + '.p'
+      cf.pickle_dump_waveform_df(outfile_name)
 
 
 if __name__=="__main__":
-  
-  data_path = sys.argv[1]
-  pickle_path = sys.argv[2]
-  config_filepath = "../../config/analysisconfig.yml"
+  if(len(sys.argv) != 4):
+    print("Usage: python Prereduce_Data.py input_globstring output_path config_filepath")
+    print("Input globstring should have a full path to data files and NOT have a file extension. ")
+    sys.exit()
 
-  Convert_Files(data_path, pickle_path)
+  input_globstring = sys.argv[1]
+  output_path = sys.argv[2]
+  config_filepath = sys.argv[3]
+
+  Convert_Files(input_globstring, output_path, config_filepath)
