@@ -2,7 +2,7 @@ import os
 
 
 activate_venv = 'source $HOME/my_personal_env/bin/activate'
-logfile_path = "/p/lustre1/nexouser/data/StanfordData/ChargeModule/LXe_Run1/"
+logfile_path = "/p/lustre1/nexouser/data/StanfordData/ChargeModule/LXe_Run1/Gamma_Data_7_16_24/"
 
 jobname = "red-6g24pt-sig"
 #change path!

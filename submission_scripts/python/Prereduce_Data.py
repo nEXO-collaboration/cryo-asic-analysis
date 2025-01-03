@@ -37,6 +37,8 @@ if __name__=="__main__":
   if(len(sys.argv) != 4):
     print("Usage: python Prereduce_Data.py input_globstring output_path config_filepath")
     print("Input globstring should have a full path to data files and NOT have a file extension. ")
+    print("you did: ", end= ' ')
+    print(sys.argv)
     sys.exit()
 
   input_globstring = sys.argv[1]
