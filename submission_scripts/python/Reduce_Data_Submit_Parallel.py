@@ -17,10 +17,10 @@ input_files = glob.glob(input_path+"*.p")
 for infile in input_files:
     tagnumber = infile.split('_')[-1].split('.')[0]
     this_jobname = tagnumber+jobname
-    cmd_options = '--export=ALL -p pbatch -t 0:10:00 -n 1 -J {} -o {}{}.out'.format(this_jobname, logfile_path, this_jobname)
-    exe = 'python $HOME/cryo-asic-analysis/submission_scripts/python/Reduce_Data.py {} {} {}'.format(input_path, output_path, config_path)
+    cmd_options = '--export=ALL -p pbatch -t 0:10:00 -n 1 -J {} --mem-per-cpu=8192 -o {}{}.out --error={}{}.err'.format(this_jobname, logfile_path, this_jobname, logfile_path, this_jobname)
+    exe = 'python $HOME/cryo-asic-analysis/submission_scripts/python/Reduce_Data.py {} {} {} 0'.format(infile[:-2], output_path, config_path) #0 at the end is so that it doesn't combine reduced files yet
     cmd_full = '{} && sbatch {} --wrap=\'{}\''.format(activate_venv,cmd_options,exe)
 
     print(cmd_full)
-    #os.system(cmd_full)
+    os.system(cmd_full)
     print('job {} sumbitted'.format(this_jobname))

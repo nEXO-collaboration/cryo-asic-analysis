@@ -33,6 +33,7 @@ def reduce(input_path, output_path, config_path):
         dr.dictify_objects() #deletes Pulse and Cluster objects, turning them into dictionaries in the reduced df
         dr.save_reduced_df(output_path, infile.split("/")[-1]) #saves the reduced df to a pickle file
 
+def combine(output_path):
 
     #combine the reduced files
     print("Combining reduced files")
@@ -49,11 +50,14 @@ def reduce(input_path, output_path, config_path):
     pickle.dump([combined_df], open(output_path+"combined.p", "wb"))
 
 if __name__ == "__main__":
-    if(len(sys.argv) != 4):
-        print("Usage: python Reduce_Data.py input_path output_path config_path. Absolute paths please")
+    if(len(sys.argv) != 5):
+        print("Usage: python Reduce_Data.py input_path output_path config_path <combine, 0 or 1>. Absolute paths please")
         sys.exit()
         
     input_path = sys.argv[1]
     output_path = sys.argv[2]
     config_path = sys.argv[3]
     reduce(input_path, output_path, config_path)
+
+    if(bool(int(sys.argv[4])) == 1):
+    	combine(output_path)
