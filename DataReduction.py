@@ -420,6 +420,11 @@ class DataReduction:
 				self.red_df["x"][ev_idx] = max_q_cluster.d["x"]
 				self.red_df["y"][ev_idx] = max_q_cluster.d["y"]
 				self.red_df["t"][ev_idx] = max_q_cluster.d["t_arrival"]
+			else:
+				self.red_df["x"][ev_idx] = None
+				self.red_df["y"][ev_idx] = None
+				self.red_df["t"][ev_idx] = None
+
 
 	#during processing, the Pulse and Cluster objects
 	#are stored in lists within the reduced dictionary. They
