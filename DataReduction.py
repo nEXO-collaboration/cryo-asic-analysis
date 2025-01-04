@@ -48,12 +48,12 @@ class DataReduction:
 					print(exc)
 		else:
 			self.config = config
-
+		
 
 		#now that the config is loaded, load the channel map file that
 		#is referenced in the config. Check if it exists
 		if(os.path.isfile(self.config["chmap"]) == False):
-			print("Cant find the channel map file: " + str(self.config["channel_map"]))
+			print("Cant find the channel map file: " + str(self.config["chmap"]))
 			self.chmap = None
 			return 
 		

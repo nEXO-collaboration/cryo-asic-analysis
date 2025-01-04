@@ -85,12 +85,12 @@ class Cluster:
 
 		self.d["n_x"] = len(x_positions)
 		self.d["n_y"] = len(y_positions)
-		if(len(x_positions) == 0):
+		if(np.sum(x_qs) == 0):
 			self.d["x"] = None
 		else:
 			self.d["x"] = np.average(x_positions, weights=x_qs)
 
-		if(len(y_positions) == 0):
+		if(np.sum(y_qs) == 0):
 			self.d["y"] = None
 		else:
 			self.d["y"] = np.average(y_positions, weights=y_qs)
