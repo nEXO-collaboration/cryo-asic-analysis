@@ -7,7 +7,6 @@ import math
 import matplotlib.pyplot as plt 
 import pandas as pd
 from scipy.signal import periodogram
-from astropy.timeseries import LombScargle
 from scipy.optimize import curve_fit
 from matplotlib.colors import LogNorm
 import matplotlib.cm as cm
@@ -17,7 +16,7 @@ import matplotlib.transforms as transforms
 from matplotlib.ticker import ScalarFormatter
 from scipy import signal
 from scipy.interpolate import interp1d
-from Utilities import get_channel_type, get_channel_pos, ADC_to_ENC, is_channel_strip
+import Utilities as Util
 
 #used in pulse finding analysis
 from operator import itemgetter
@@ -122,8 +121,8 @@ class CryoAsicAnalysis:
 		for i, ch in enumerate(ev["Channels"]):
 			ev_dict["Channel"].append(ch)
 			ev_dict["Data"].append(ev["Data"][i])
-			ev_dict["ChannelType"].append(get_channel_type(self.chmap,ch))
-			ev_dict["ChannelPos"].append(get_channel_pos(self.chmap,ch))
+			ev_dict["ChannelType"].append(Util.get_channel_type(self.chmap,ch))
+			ev_dict["ChannelPos"].append(Util.get_channel_pos(self.chmap,ch))
 
 		evdf = pd.DataFrame.from_dict(ev_dict)
 		return evdf
@@ -172,7 +171,7 @@ class CryoAsicAnalysis:
 		curshift = 0
 		for i in range(nch):
 			if(i in chs_to_plot):
-				if ENC: ax.plot(times, ADC_to_ENC(waves[i] + curshift), label=str(chs[i]))
+				if ENC: ax.plot(times, Util.ADC_to_ENC(waves[i] + curshift), label=str(chs[i]))
 				else: ax.plot(times, waves[i] + curshift, label=str(chs[i]))
 				ax.set_title(title)
 				if window:
@@ -322,90 +321,6 @@ class CryoAsicAnalysis:
 		wave = np.delete(wave, indices_to_delete)
 		times = np.delete(self.times, indices_to_delete)
 		return wave, times
-
-	#Performs a pulse finding algorithm
-	#to find any peaks above a threshold, then 
-	#performs a periodogram with the Lomb-Scargle algorithm which
-	#is robust to unevenly sampled data. This function is about 
-	#10x slower than the regular PSD function. I would suggest not
-	#using it unless you are really sure it matters. 
-	def calculate_avg_psds_ignore_pulses(self):
-		self.load_config(self.configfile_or_dict)
-		self.baseline_subtract() #baseline subtract all events
-		chs = self.df.iloc[0]["Channels"]
-		nevents = len(self.df.index) #looping through all events
-		#frequency range, to change units in the density to V^2/Hz
-		#max freq - min freq
-		freq_range = (self.sf/2.0 - 1.0/(self.dT*len(self.times)))*1e6
-		#these are used to linearly interpolate so that we can average many lists
-		#with different lengths.
-		fine_freqs = np.array(np.linspace(1.0/(self.dT*len(self.times)), self.sf/2.0, len(self.times*10)))*1e6
-		fine_freqs = fine_freqs[1:-1]
-		coarse_freqs = np.array(np.linspace(1.0/(self.dT*len(self.times)), self.sf/2.0, len(self.times)))*1e6
-		coarse_freqs = coarse_freqs[1:-1]
-		for ch in chs:
-			pxx_tot = None
-			freqs = None
-			avg_event_counter = 0 #number of events over which the avg is calculated
-			for i in range(nevents):
-				wave = self.get_wave(i, ch)
-				times = self.times
-
-				#find pulses in the waveform
-				pulses = self.find_pulses_in_channel(i, ch)
-				indices_to_delete = []
-				if(len(pulses) > 0):
-					#remove samples in the wave and a time stream associated with 
-					#the places where pulses or glitches exist. 
-					for p in pulses:
-						if(len(p["index"]) == 1):
-							indices_to_delete += p["index"]
-						else:
-							indices_to_delete = indices_to_delete + list(range(p["index"][0], p["index"][1]+1))
-				
-				if(len(wave) in indices_to_delete):
-					indices_to_delete.remove(len(wave))
-				
-				wave = np.delete(wave, indices_to_delete)
-				times = np.delete(times, indices_to_delete)
-
-				wave = [_*self.config["mv_per_adc"]/1000. for _ in wave] #putting ADC units into volts
-				
-				times = np.array(times)*1e-6 #convert to seconds for the lombscargle
-				fs, pxx = LombScargle(times, wave, normalization='psd').autopower(minimum_frequency = 1.0/(self.dT*len(self.times)*1e6), maximum_frequency = self.sf*1e6/2.0)
-				
-
-				pxx = pxx/freq_range #convert to V^2/Hz
-				#interpolate to a fine frequency range, and then
-				#go back to coarse once done averaging
-
-				pxx_fine = interp1d(fs, pxx)(fine_freqs)
-				if(pxx_tot is None):
-					pxx = interp1d(fine_freqs, pxx_fine)(coarse_freqs)
-					pxx_tot = pxx 
-				else:
-					pxx_tot_fine = np.array(interp1d(coarse_freqs, pxx_tot)(fine_freqs))
-					pxx_tot_fine = pxx_tot_fine + pxx_fine
-					pxx_tot = interp1d(fine_freqs, pxx_tot_fine)(coarse_freqs)
-					
-				avg_event_counter += 1
-
-			pxx_tot = pxx_tot/float(avg_event_counter)
-
-
-			#add to the noise dataframe. 
-			#if the row for this channel already exists, just update columns
-			if(ch in self.noise_df.index):
-				self.noise_df.at[ch,"Freqs"] = coarse_freqs
-				self.noise_df.at[ch,"PSD"] = pxx_tot
-			else:
-				s = pd.Series()
-				s["Freqs"] = coarse_freqs
-				s["PSD"] = pxx_tot
-				s["Channel"] = ch 
-				self.noise_df = pd.concat([self.noise_df, s.to_frame().transpose()], ignore_index=True)
-
-
 
 
 	#for every channel, calculate a PSD using an event-by-event
@@ -600,7 +515,7 @@ class CryoAsicAnalysis:
 		for evt in range(nevents):
 			evt_times = []
 			for ch in chs:
-				if not is_channel_strip(self.chmap, ch): continue
+				if not Util.is_channel_strip(self.chmap, ch): continue
 				WVFM = self.get_wave(evt, ch)
 				if ch ==1: time = len(WVFM * self.dT)
 				sigma = np.std(WVFM)
@@ -789,7 +704,7 @@ class CryoAsicAnalysis:
 	#overlayed, but with traces shifted relative to eachother by 
 	#some number of ADC counts. if tileno is not none, it only plots
 	#one tile, associated with an integer passed as argument
-	def plot_event_waveforms_separated(self, evno, ax=None, show=True):
+	def plot_event_waveforms_separated(self, evno, sep = None, ax=None, show=True):
 		if(evno < 0):
 			evno = 0
 		if(evno > self.nevents_total):
@@ -798,7 +713,10 @@ class CryoAsicAnalysis:
 
 		ev = self.df.iloc[evno]
 
-		adc_shift = 0 #number of adc counts to shift traces
+		if(sep == None):
+			adc_shift = 50
+		else:
+			adc_shift = sep #number of adc counts to shift traces
 
 		chs = ev["Channels"]
 		waves = ev["Data"]
@@ -864,7 +782,7 @@ class CryoAsicAnalysis:
 			wave = row["Data"]
 			ch_idx = xchs.index(row["Channel"])
 			for j in range(len(wave)):
-				xstrip_img[ch_idx][j] = wave[j]*self.config["mv_per_adc"]
+				xstrip_img[ch_idx][j] = Util.ADC_to_ENC(wave[j], self.config["gain"], self.config["pt"])
 
 		for i, row in ydf.iterrows():
 			ypos.append(row["ChannelPos"][0])
@@ -877,10 +795,10 @@ class CryoAsicAnalysis:
 			wave = row["Data"]
 			ch_idx = ychs.index(row["Channel"])
 			for j in range(len(wave)):
-				ystrip_img[ch_idx][j] = wave[j]*self.config["mv_per_adc"]
+				ystrip_img[ch_idx][j] = Util.ADC_to_ENC(wave[j], self.config["gain"], self.config["pt"])
 
 		if(sep == None):
-			mv_shift = 50 #number of adc counts to shift traces
+			mv_shift = 1000 #number of electrons to shift traces
 		else:
 			mv_shift = sep
 
@@ -909,9 +827,9 @@ class CryoAsicAnalysis:
 
 		ax[0].set_xlabel('time (us)')
 		ax[0].set_title("X-strips, event {:d}".format(evno))
-		ax[0].set_ylabel("shifted mV")
+		ax[0].set_ylabel("shifted electrons")
 		ax[1].set_xlabel('time (us)')
-		ax[1].set_ylabel("shifted mV")
+		ax[1].set_ylabel("shifted electrons")
 		ax[1].set_title("Y-strips, event {:d}".format(evno))
 		#ax[0].set_ylim([-10, 200])
 		#ax[1].set_ylim([-10, 200])
@@ -963,14 +881,14 @@ class CryoAsicAnalysis:
 						print(exc)
 				#done 
 				
-				type =  get_channel_type(chmap, channel)
+				type =  Util.get_channel_type(chmap, channel)
 				if type == "dummy": continue
 				
 				channel_max = np.max((evdf["Data"][channel])[time-window:time+window])
 				channel_amp = (channel_max-min)/(max-min)
 
 				if type == "x":
-						pos = get_channel_pos(chmap, channel)[1]
+						pos = Util.get_channel_pos(chmap, channel)[1]
 						strip_verticies = [
 								(-45, pos),
 								(-45+pitch/2, pos+pitch/2),
@@ -988,7 +906,7 @@ class CryoAsicAnalysis:
 								strip_patch.set_transform(transform)
 				
 				if type == "y":
-						pos = get_channel_pos(chmap, channel)[0]
+						pos = Util.get_channel_pos(chmap, channel)[0]
 						
 						strip_verticies = [
 								(pos, -45),
@@ -1060,7 +978,7 @@ class CryoAsicAnalysis:
 
 		for i, row in self.noise_df.iterrows():
 			ch = row["Channel"]
-			typ = get_channel_type(self.chmap,ch)
+			typ = Util.get_channel_type(self.chmap,ch)
 			if(typ == "x"):
 				xstrips["ch"].append(ch)
 				xstrips["std"].append(row["STD"])
@@ -1075,9 +993,9 @@ class CryoAsicAnalysis:
 		if(ax is None):
 			fig, ax = plt.subplots()
 
-		xmean = ADC_to_ENC(np.mean(xstrips["std"]))
-		ymean = ADC_to_ENC(np.mean(ystrips["std"]))
-		dmean = ADC_to_ENC(np.mean(dummies["std"]))
+		xmean = Util.ADC_to_ENC(np.mean(xstrips["std"]))
+		ymean = Util.ADC_to_ENC(np.mean(ystrips["std"]))
+		dmean = Util.ADC_to_ENC(np.mean(dummies["std"]))
 		ax.scatter(xstrips["ch"], xstrips["std"], label="X Strips: {:.1f} e- mean".format(xmean), s=100)
 		ax.scatter(ystrips["ch"], ystrips["std"], label="Y Strips: {:.1f} e- mean".format(ymean), s=100)
 		if dummy: ax.scatter(dummies["ch"], dummies["std"], label="dummies: {:.1f} e- mean".format(dmean), s=100)
@@ -1088,7 +1006,7 @@ class CryoAsicAnalysis:
 		ax.grid(False)
 
 		axENC = ax.twinx()
-		ENCLim = ADC_to_ENC(ax.get_ylim())
+		ENCLim = Util.ADC_to_ENC(ax.get_ylim())
 		axENC.set_ylim(ENCLim[0], ENCLim[1])
 		axENC.set_ylabel("ENC [e^-]")
 		axENC.grid(False)
@@ -1115,24 +1033,24 @@ class CryoAsicAnalysis:
 
 		for i, row in self.noise_df.iterrows():
 			ch = row["Channel"]
-			typ = get_channel_type(self.chmap,ch)
+			typ = Util.get_channel_type(self.chmap,ch)
 			if(typ == "x"):
-				xstrips["pos"].append(get_channel_pos(self.chmap,ch)[1])
+				xstrips["pos"].append(Util.get_channel_pos(self.chmap,ch)[1])
 				xstrips["std"].append(row["STD"])
 			elif(typ == "y"):
-				ystrips["pos"].append(get_channel_pos(self.chmap,ch)[0])
+				ystrips["pos"].append(Util.get_channel_pos(self.chmap,ch)[0])
 				ystrips["std"].append(row["STD"])
 			else:
-				dummies["pos"].append(get_channel_pos(self.chmap,ch)[0])
+				dummies["pos"].append(Util.get_channel_pos(self.chmap,ch)[0])
 				dummies["std"].append(row["STD"])
 		
 		
 		if(ax is None):
 			fig, ax = plt.subplots()
 
-		xmean = ADC_to_ENC(np.mean(xstrips["std"]))
-		ymean = ADC_to_ENC(np.mean(ystrips["std"]))
-		dmean = ADC_to_ENC(np.mean(dummies["std"]))
+		xmean = Util.ADC_to_ENC(np.mean(xstrips["std"]))
+		ymean = Util.ADC_to_ENC(np.mean(ystrips["std"]))
+		dmean = Util.ADC_to_ENC(np.mean(dummies["std"]))
 		ax.scatter(xstrips["pos"], xstrips["std"], label="X Strips: {:.1f} e- mean".format(xmean), s=100)
 		ax.scatter(ystrips["pos"], ystrips["std"], label="Y Strips: {:.1f} e- mean".format(ymean), s=100)
 		ax.scatter(dummies["pos"], dummies["std"], label="dummies: {:.1f} e- mean".format(dmean), s=100)
@@ -1143,7 +1061,7 @@ class CryoAsicAnalysis:
 		ax.grid(False)
 
 		axENC = ax.twinx()
-		ENCLim = ADC_to_ENC(ax.get_ylim())
+		ENCLim = Util.ADC_to_ENC(ax.get_ylim())
 		axENC.set_ylim(ENCLim[0], ENCLim[1])
 		axENC.set_ylabel("ENC [e^-]")
 		axENC.grid(False)

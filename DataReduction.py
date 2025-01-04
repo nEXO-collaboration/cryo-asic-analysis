@@ -4,9 +4,11 @@ import pandas as pd
 import numpy as np
 from scipy.signal import find_peaks
 import pickle
-from Utilities import get_asic_and_ch, get_unique_id, get_channel_type, get_channel_pos, is_channel_strip, ADC_to_ENC
-import CryoAsicFile
+import Utilities as Util
 import Pulse
+import Cluster
+import matplotlib.pyplot as plt
+import sys
 
 class DataReduction:
 	#Config is the "analysis config" file in configs, or a dictionary
@@ -14,7 +16,7 @@ class DataReduction:
 	#The input_files is a list of filenames of what you want to reduce. For example, a list
 	#from glob that selects all files with gain 6 and 1.2 pt from some directory. Full path expected.
 	
-	def __init__(self, input_files, config):
+	def __init__(self, config):
 
 		self.configfile_or_dict = config
 		self.config = None #has global analysis config dictionary contents
@@ -26,19 +28,13 @@ class DataReduction:
 		self.rq_dict = None
 		self.load_rq_dict() #Populates that dictionary with the entirity of the reducedquantities yaml file
 
-		#The output starts as a dictionary, can later be saved as a pandas dataframe. 
-		#The keys are the reduced quantities, and the values are lists of the reduced quantities
-		#where each element of the list is a "row" or event. For example, 
-		#self.reduced_df["x"] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10...] which can then be
-		#converted using pd.DataFrame.from_dict(self.reduced_df) which are often easier
-		#for analysis notebooks as you can mask events using boolean masks. But it is computationally
-		#more expensive to append to pandas dataframes than it is to append to lists. 
-		self.reduced_df = {} 
-		self.initialize_reduced_df() #populates the reduced_df with the keys from the reduced quantities dictionary
 
+		#a temporary waveform_df object for the waveforms that are being analyzed
+		#in the present file. Gets repopulated as one loads the next prereduced file. 
 		self.waveform_df = None #this is the waveform df imported by the input files. 
+		self.infile = None #current infile path. 
+		self.red_df = {} #A temporary, one-file-only reduced dictionary that is concatenated to the self.reduced_df at the end of the file iteration.
 
-		self.input_files = input_files
 		
 
 	def load_config(self, config):
@@ -52,12 +48,12 @@ class DataReduction:
 					print(exc)
 		else:
 			self.config = config
-
+		
 
 		#now that the config is loaded, load the channel map file that
 		#is referenced in the config. Check if it exists
 		if(os.path.isfile(self.config["chmap"]) == False):
-			print("Cant find the channel map file: " + str(self.config["channel_map"]))
+			print("Cant find the channel map file: " + str(self.config["chmap"]))
 			self.chmap = None
 			return 
 		
@@ -83,58 +79,6 @@ class DataReduction:
 					print(exc)
 		#done
 
-	def initialize_reduced_df(self):
-		self.reduced_df = {} 
-		#initialize the reduced_df with the keys from the reduced quantities dictionary
-		if(self.rq_dict is None):
-			print("Reduced quantities dictionary is empty")
-			print("Trying to populate it now")
-			self.load_rq_dict()
-			if(self.rq_dict is None):
-				print("Failed to populate the reduced quantities dictionary")
-			return
-
-		#get an empty event, which is a dictionary with the keys of the reduced quantities
-		empty_event = self.get_empty_event()
-		#populate the reduced_df with the keys from the reduced quantities dictionary
-		for key in empty_event:
-
-			# Organizing the sub channel_rqs sub structre
-			if key in self.rq_dict["channel_rqs"]:
-				self.reduced_df[key] = {}
-				for key2 in empty_event[key]:
-					self.reduced_df[key][key2] = []
-			else:
-				self.reduced_df[key] = []
-
-		#done
-
-	#returns an empty, initialized event where each key's element
-	#can be appended to the reduced_df keys of the same name. 
-	def get_empty_event(self):
-		
-		event = {}
-
-		event["pulse"] = [] # Adding in a temporary pulse key to store out infomration while we work on making the pulse class
-
-		for key in self.rq_dict["global"]:
-			event[key] = self.rq_dict["global"][key] #initialize to the default value specified in the yaml file. 
-
-		# Note we implictly skip dummy channels by only looping over the channel map
-
-		for key in self.rq_dict["channel_rqs"]:
-			event[key] = {}
-			for asic in self.chmap:
-				for xch in self.chmap[asic]["xstrips"]:
-					chid = get_unique_id(asic, xch)
-					event[key]["ch{:d}".format(chid)] = []
-			
-				for ych in self.chmap[asic]["ystrips"]:
-					chid = get_unique_id(asic, ych)
-					event[key]["ch{:d}".format(chid)] = []
-		return event
-
-
 	#The path is the full path of output 
 	#The filename is the name of the file you want to save with no extensions. 
 	#It checks if the path exists and creates it if possible. 
@@ -145,136 +89,372 @@ class DataReduction:
 		if(os.path.exists(path) == False):
 			os.makedirs(path)
 		
+		#check the filetag of the filename and correct it to .p if it is not already.
+		if(filename.split('.')[-1] != 'p'):
+			tag_removed = filename.split('.')[:-1]
+			filename += tag_removed+'.p'
+
 		#first convert to dataframe
-		if(isinstance(self.reduced_df, dict)):
-			df = pd.DataFrame.from_dict(self.reduced_df)
-			pickle.dump([df], open(path+filename+".p", 'wb'))
+		if(isinstance(self.red_df, dict)):
+			df = pd.DataFrame.from_dict(self.red_df)
+			pickle.dump([df], open(path+filename, 'wb'))
 		else:
-			print("Somehow the self.reduced_df became something other than a dict.")
+			print("Somehow the self.red_df became something other than a dict.")
 			print("Write some handling code in save_reduced_df to handle this")
-			pickle.dump([self.reduced_df], open(path+filename+".p", 'wb'))
+			pickle.dump([self.red_df], open(path+filename, 'wb'))
 
 	
-
-	def reduce_data(self, Skip_Baseline=False):
-
-		#There may be an infinite amount of data files input to this reduction code. 
-		#Instead of loading all of them and combining into a big waveform_df, we will
-		#load each one, reduce each one, build up a big reduced_df that is a culmination
-		#of all of the waveform_df files. Two key elements of the reduced_df are the
-		#filename and evidx within that filename, used to re-index events to their origin. 
-
-		# Glenn's Note: I disagree slightly here. I think there can be a theoretically infinite
-		# number of files handed here, but as long as we maintain a good naming scheme with data
-		# files, then we don't need to save the full file name, which I think will be clunky to 
-		# read, and hard to mask on as well. Instead, we can maintain out current data naming
-		# scheme which ends each file with "file_##.dat" and reference the number of that file.
-		# The name of the file will be savd in the name of the reduced df file so all information
-		# is preserved in minimal and easily parsable way
-
-		for infile in self.input_files:
-			print("Reducing file {}".format(infile))
-
-			if infile.split('.')[-1] == "dat":
-
-				# If binary file is given it will automatically reduce it to necessary pickle file
-				print('Data Reduction was given a binary file - Converting to unreduced df')
-				cf = CryoAsicFile.CryoAsicFile(infile, self.configfile_or_dict)
-				cf.load_raw_data()
-				cf.group_into_pandas()
-				outfilename = infile.split('.')[0] + infile.split('.')[1] + '.p'
-				cf.pickle_dump_waveform_df(outfilename)
-
-				self.waveform_df = pickle.load(outfilename, 'rb')[0]
-
-			elif infile.split('.')[-1] == 'p':
-				self.waveform_df = pickle.load(open(infile, 'rb'))[0]
-
-			else:
-				print('Unrecognized file type .{0} given to data reducer. Please check file paths and try again.'.format(infile.split('.')[-1]))
-				return
-
-			file_num = (((infile.split('/')[-1]).split('_')[-1]).split('.')[0])[4:]
-
-			self.initialize_reduced_df()
-
-			## Looping over each event in the file to add paramters to 
-			for i, row in self.waveform_df.iterrows():
-				if(i % 500 == 0): print("On event {:d} of {:d}".format(i, len(self.waveform_df.index)))
-				
-				#do all of your analysis on the event ("row")
-				
-				self.reduced_df["filenum"].append(file_num)
-				self.reduced_df["evidx"].append(i)
-				self.reduced_df["timestamp"].append(row["Timestamp"])
-
-				# To fill in the cluster and pulse reduced quantities we start from the 
-				# bottom and work our way up - identify pulses in the window and then
-				# fill in pulses and once that's done we group them together to fill
-				# in cluster information and then finally complete the relevent
-				# global information
-
-				# Temporarily writing to our temp column of pulses while we work on clustering algorithm
-				self.reduced_df["pulse"].append(self.find_pulses(i,row))
-
-				# As of this build, baseline data is by far the slowest, so we give the option to skip it for speed if desired
-				if not Skip_Baseline:
-					self.fill_in_baselines(row)
-
-
-	# Put this in DataReduction file because I thought it'd be short and sweet, but might be worth moving to its own file for consistancy later
-	def fill_in_baselines(self, row):
-
-		for ch in row["Channels"]:
-
-			# Note we continue to skip dummy channels
-			if not is_channel_strip(self.chmap, ch): continue
-			
-			wvfm = row["Data"][ch]
-			bl_window = wvfm[self.config["baseline"][0]*self.config["sampling_rate"]: self.config["baseline"][1]*self.config["sampling_rate"]]
-			self.reduced_df["baseline_noise"]["ch{:d}".format(ch)].append(ADC_to_ENC(np.std(bl_window)))
-			# Ignoring full_window_noise for now since will require cutting out pulses - so need to get pulse finder workng first
-			#self.reduced_df["full_window_noise"]["ch{:d}".format(ch)].append(ADC_to_ENC(np.std(wvfm))) 
-			self.reduced_df["baseline"]["ch{:d}".format(ch)].append(np.asarray(ADC_to_ENC(bl_window)))
-			self.reduced_df["baseline_shift"]["ch{:d}".format(ch)].append(ADC_to_ENC(np.mean(bl_window)))
-
-
-	def find_pulses(self, event, row, n_sigma=4, width=30):
-
-
-		pulse_df = {}
+	def load_prereduced_data(self, infile):
+		#Evan removed a part here that allowed the user to give raw data to this function,
+		#doing the pre-reduction step. I do not want the user to have the flexibility to do this.
+		#it creates too much file handling and organizational issues that we don't want to be responsible for. 
+		#The user must (1) pre-reduce the raw data, then (2) reduce it with this class, and organize accordingly. 
 		
-		# Checking to see if user has given a custom threshold value
-		if n_sigma is None:
-			n_sigma = self.config["pulse_threshold"]
+		if(infile.split('.')[-1] == 'p'):
+			print("loading file {}".format(infile))
+			self.waveform_df = pickle.load(open(infile, 'rb'))[0]
+			self.infile = infile
+			print("Done")
 
-		for ch in row["Channels"]:
+		else:
+			print('Unrecognized file type .{0} given to data reducer. Please check file paths and try again.'.format(infile.split('.')[-1]))
+			return
 
-			# Note we skip dummy channels for the actual event anlaysis too
-			if not is_channel_strip(self.chmap, ch):
+	#takes in a numpy array of all waves in a file. 
+	def analyze_and_subtract_baselines(self, wavs):
+		#get the baseline window in samples. 
+		bl_window = [int(self.config["baseline"][0]*self.config["sampling_rate"]), int(self.config["baseline"][1]*self.config["sampling_rate"])]
+
+		#in a vectorized way, get the baselines and std values for all channels
+		baselines = np.median(wavs[:,:,bl_window[0]:bl_window[1]], axis=2)
+		stds = np.std(wavs[:,:,bl_window[0]:bl_window[1]], axis=2)
+		sub_wavs = wavs - baselines[:, :, np.newaxis]
+		return sub_wavs, {"baselines": baselines, "stds": stds}
+
+	def analyze_min_max(self, wavs):
+		ignore_regions = self.config["ignore_regions"]
+		#turn into units of samples
+		ignore_regions = [[int(region[0]*self.config["sampling_rate"]), int(region[1]*self.config["sampling_rate"])] for region in ignore_regions]
+		#initialize a mask 
+		samples = wavs.shape[2]
+		mask = np.ones(samples, dtype=bool)
+		for region in ignore_regions:
+			if(region[1] >= samples):
+				region[1] = samples-1
+			if(region[0] < 0):
+				region[0] = 0
+			mask[region[0]:region[1]] = False
+
+		masked_waves_min = np.where(mask, wavs, np.inf) #np inf will replace masked values, so a minimum function ignores them
+		masked_waves_max = np.where(mask, wavs, -1*np.inf) #np -inf will replace masked values, so a minimum function ignores them
+
+		return {"min": np.min(masked_waves_min, axis=2), "max": np.max(masked_waves_max, axis=2)}
+
+	def reduce_to_pulses(self):
+
+		
+		#create a reduced dictionary that has reduced quantities for all events. 
+		#this will be concatenated at the end of this file iteration to the self.reduced_df.
+		red_df = {} 
+
+		#some operations, like baseline subtraction, are much better
+		#to perform on a numpy array as a vectorized operation. For that,
+		#we unpack this dataframe into a numpy array of shape 
+		#wavs[events][channels][samples].shape = (n_events, n_channels, n_samples)
+		wavs = np.array(self.waveform_df["Data"].to_list())
+		chidx_map = np.array(self.waveform_df["Channels"].to_list())[0]
+
+		#NOTE: tried to convert all wavs from ADC to ENC here so that all analysis operations
+		#are in ENC units from this point on. It took way way way too long for some reason... 
+		#possibly not the right vectorized syntax or something. This is why you see a bunch of 
+		#calls to that function down below. 
+
+		#baseline subtract the waveforms. This function
+		#will also extracts information related to baselines,
+		#like the std and means.
+		print("Subtracting baselines")
+		wavs, extracted = self.analyze_and_subtract_baselines(wavs)
+
+		#its also convenient here to get the full waveform stds 
+		print("Getting full STDs")
+		full_stds = np.std(wavs, axis=2) #for all events and all channels
+		#add the extracted info to our red_df
+		for chidx in range(len(wavs[0])):
+			#get the unique, ASIC-number agnostic channel ID
+			ch = chidx_map[chidx]
+			red_df["ch{:d} baseline".format(ch)] = Util.ADC_to_ENC(extracted["baselines"][:, chidx], self.config["gain"], self.config["pt"])
+			red_df["ch{:d} baseline_std".format(ch)] = Util.ADC_to_ENC(extracted["stds"][:, chidx], self.config["gain"], self.config["pt"])
+			red_df["ch{:d} full_std".format(ch)] = Util.ADC_to_ENC(full_stds[:, chidx], self.config["gain"], self.config["pt"])
+
+		#the min and max value of all channels can also be vectorized, and would
+		#be simple if not for the glitch pulses that we have to ignore/max certain
+		#regions for. So in the future, you can replace this with one line like np.max(wavs, axis=2)
+		#but for now, we have a special function that calls a utility. 
+		print("Analyzing minimums and maximums")
+		extracted = self.analyze_min_max(wavs)
+		#add the extracted info to our red_df
+		for chidx in range(len(wavs[0])):
+			#get the unique, ASIC-number agnostic channel ID
+			ch = chidx_map[chidx]
+			red_df["ch{:d} min".format(ch)] = Util.ADC_to_ENC(extracted["min"][:, chidx], self.config["gain"], self.config["pt"])
+			red_df["ch{:d} max".format(ch)] = Util.ADC_to_ENC(extracted["max"][:, chidx], self.config["gain"], self.config["pt"])
+
+
+
+		#add some global reduced quantities that are simple at this stage
+		red_df["filename"] = [self.infile]*len(self.waveform_df.index)
+		red_df["evidx"] = list(range(len(self.waveform_df.index)))
+		red_df["timestamp"] = self.waveform_df["Timestamp"].to_list()
+
+
+		red_df["pulses"] = [[] for i in range(len(self.waveform_df.index))]
+		red_df["n_pulses"] = np.zeros(len(self.waveform_df.index))
+		print("Initializing pulses for events with any sample above positive threshold of {:0.2f} sigma".format(self.config["low_threshold"]))
+		#do a np.where to find where any channel number is above threshold
+		mask = None
+		for chidx in range(len(wavs[0])):
+			ch = chidx_map[chidx]
+			if(not Util.is_channel_strip(self.chmap, ch)):
 				continue
-
-			wvfm = row["Data"][ch]
-			temp_pulses, params = find_peaks(wvfm, width=self.config["pt"], height = n_sigma*np.std(wvfm)+np.mean(wvfm), wlen=width)
-			pulses = []
-			
-			for p in temp_pulses:
-				
-				if not (any(window[0] <= p <= window[1] for window in self.config["ignore_regions"])):
-					pulses.append(p)
-
-			for i, peak in enumerate(pulses):
-
-				## Taking a convention where each pulse will be listed as "Pulse {event}-{pulse number within the event}"
-				pulse_df["Pulse {0}-{1}".format(event, i)] = Pulse.Pulse(self.config, self.rq_dict["pulse"], wvfm, i, params).d
-				(pulse_df["Pulse {0}-{1}".format(event, i)])["channel"] = ch
-
-		return pulse_df
-
-
-
-
-
-			
-	
+			if(ch in self.config["dead_channels"]):
+				continue 
+			maxs = red_df["ch{:d} max".format(ch)]
+			threshs = self.config["low_threshold"]*red_df["ch{:d} baseline_std".format(ch)]
+			if(mask is None):
+				mask = np.where(maxs > threshs, 1, 0)
+			#if a mask already exists, I want to OR it with the new mask
+			else:
+				mask = np.where(maxs > threshs, 1, 0) | mask
 		
+
+		#get red_ev indices that passed mask
+		red_ev_idxs = np.where(mask == 1)[0]
+		for ev_idx in red_ev_idxs:
+			temp_pulse_channels = [] #list of pulse objects that will be edited 
+			#loop through all strip channels and initialize pulse objects
+			#for each channel that has a pulse above a wide acceptance threshold
+			for chidx in range(len(wavs[ev_idx])):
+				ch = chidx_map[chidx]
+				if(not Util.is_channel_strip(self.chmap, ch)):
+					continue
+				if(ch in self.config["dead_channels"]):
+					continue 
+				
+				if(red_df["ch{:d} max".format(ch)][ev_idx] > self.config["low_threshold"]*red_df["ch{:d} baseline_std".format(ch)][ev_idx]):
+					temp_pulse_channels.append(ch)
+
+			#we want to initialize pulse objects
+			#for channels spatially adjacent 
+			set_adjacent_chs = [] #to avoid double counting
+			for ch in temp_pulse_channels:
+				#initialize the spatially adjacent pulses
+				adj_chs = Util.get_adjacent_channels(self.chmap, ch, self.config["adjacency"])
+				for adj in adj_chs:
+					if(adj in self.config["dead_channels"]):
+						continue
+					set_adjacent_chs.append(adj)
+			
+			#make sets to remove duplicate channels and duplicate pulses
+			adj_chs = list(set(set_adjacent_chs))
+			all_chs = temp_pulse_channels + adj_chs
+			all_chs = list(set(all_chs))
+			for adj in all_chs:
+				chidx = np.where(chidx_map == adj)[0][0]
+				red_df["pulses"][ev_idx].append(Pulse.Pulse(self.rq_dict["pulse"], self.config, wavs[ev_idx][chidx], adj))
+
+			red_df["n_pulses"][ev_idx] = len(red_df["pulses"][ev_idx])
+
+		self.red_df = red_df #store the reduced dictionary for this file.
+		#later will be concatenated manually to the self.reduced_df.
+
+
+	#does waveform level analysis on pulse objects, 
+	#vetting them to either remove if they are meaningless
+	#or calculate reduced quantities like energy and such. 
+	def process_pulses(self):
+		#get events that have non-zero length of pulse objects
+		red_ev_idxs = np.where(np.array(self.red_df["n_pulses"]) > 0)[0]
+		print("Got {:d} events with pulses".format(len(red_ev_idxs)))
+
+		#First, re-buffer pulses into small chunks that
+		#(1) separate multiple pulses from one channel in one event waveform
+		#(2) reject pulses that single data point glitches
+		print("Rejecting single data point glitches and buffering pulses")
+		for ev_idx in red_ev_idxs:
+			pulses = self.red_df["pulses"][ev_idx]
+
+			#first, find any pulses where a peak above threshold can be found,
+			#which may not be many of the channels, as we added pulses that are spatially
+			#adjacent in the previous step. They may not have a peak above threshold, but may
+			#have measurable charge through integration. 
+			peakfound_pulses = []
+
+			for i, p in enumerate(pulses):
+				ch = p.ch
+				#get std of the baseline for this channel
+				std = self.red_df["ch{:d} baseline_std".format(ch)][ev_idx]
+				thresh = self.config["low_threshold"]*std
+				#the waveform is in ADC and this thresh is in ENC, put the thresh in ADC
+				thresh = Util.ENC_to_ADC(thresh, self.config["gain"], self.config["pt"])
+				#ignore-region pulses are rejected in the p.find_peaks function. 
+				temp_pulses, properties = p.find_peaks(width=self.config["pt"], thresh=thresh)
+				if(len(temp_pulses) == 0):
+					continue
+				
+				for j, tp in enumerate(temp_pulses):
+					#reject single-data point glitches due to data corruption
+					if(properties["widths"][j] < 1.0/self.config["sampling_rate"]):
+						continue
+
+					#isolate this pulse from the waveform and store it in a new pulse object. 
+					#this is so that we can analyze the pulse in isolation.
+					window = [tp - int(self.config["pulse_window"]*self.config["sampling_rate"]/2), tp + int(self.config["pulse_window"]*self.config["sampling_rate"]/2)]
+					newP = Pulse.Pulse(self.rq_dict["pulse"], self.config, p.wav[window[0]:window[1]], ch, idx_start=window[0])
+					peakfound_pulses.append(newP)
+				
+			self.red_df["pulses"][ev_idx] = peakfound_pulses
+			self.red_df["n_pulses"][ev_idx] = len(peakfound_pulses)
+
+		#Calculate all reduced quantities for the pulses
+		red_ev_idxs = np.where(np.array(self.red_df["n_pulses"]) > 0)[0]
+		print("Calculating reduced quantities for pulses from {:d} remaining events".format(len(red_ev_idxs)))
+		for ev_idx in red_ev_idxs:
+			for p in self.red_df["pulses"][ev_idx]:
+				p.calculate_reduced_quantities()
+
+		
+
+
+
+	def process_clusters(self):
+		#initialize an empty list of clusters for each event
+		self.red_df["clusters"] = [[] for i in range(len(self.red_df["evidx"]))]
+		#and the rest of the reduced quantities for the clusters
+		self.red_df["n_clusters"] = [0]*len(self.red_df["evidx"])
+		self.red_df["total_charge"] = [None]*len(self.red_df["evidx"])
+		self.red_df["x"] = [None]*len(self.red_df["evidx"])
+		self.red_df["y"] = [None]*len(self.red_df["evidx"])
+		self.red_df["z"] = [None]*len(self.red_df["evidx"])
+		self.red_df["t"] = [None]*len(self.red_df["evidx"])
+
+		#only process events with pulses
+		red_ev_idxs = np.where(np.array(self.red_df["n_pulses"]) > 0)[0]
+		print("Processing clusters for {:d} events which have pulses".format(len(red_ev_idxs)))
+		for ev_idx in red_ev_idxs:
+			#cluster time first
+			ts = [p.d["t_arrival"] for p in self.red_df["pulses"][ev_idx]]
+			t_clust, t_clust_idx = Util.simple_1d_clustering(ts, self.config["clust_time_sep"])
+			#within each time cluster, cluster in x and y (to see if two clusters arrive at the same time)
+			for tcidx, tc in enumerate(t_clust_idx):
+				#pulses in the cluster
+				clust_ps = [self.red_df["pulses"][ev_idx][i] for i in tc]
+				xs = []
+				ys = []
+				for p in clust_ps:
+					if(Util.get_channel_type(self.chmap, p.ch) == 'x'):
+						ys.append(Util.get_channel_pos(self.chmap, p.ch)[1])
+					else:
+						xs.append(Util.get_channel_pos(self.chmap, p.ch)[0])
+
+				x_clust, x_clust_idx = Util.simple_1d_clustering(xs, self.config["clust_space_sep"])
+				y_clust, y_clust_idx = Util.simple_1d_clustering(ys, self.config["clust_space_sep"])
+				#handle the simple case where there is only one cluster in both x and y
+				#or if there is just a single x cluster with no y cluster or vice versa
+				if((len(x_clust) == 1 and len(y_clust) == 1) or (len(x_clust) + len(y_clust) == 1)):
+					#initialize the cluster object
+					temp_clust = Cluster.Cluster(self.rq_dict["cluster"], self.config)
+					for xc in x_clust_idx:
+						for i in xc:
+							temp_clust.pulses.append(clust_ps[i])
+					for yc in y_clust_idx:
+						for i in yc:
+							temp_clust.pulses.append(clust_ps[i])
+
+					self.red_df["clusters"][ev_idx].append(temp_clust)
+					self.red_df["n_clusters"][ev_idx] += 1
+				else:
+					#I don't quite know what to do if we get two events
+					#landing on the tile at the same time. It's a degeneracy
+					#built into the tile geometry. One needs to make assumptions
+					#about charge sharing to be able to associate the x-y
+					#values of the charge depositions. SO, for now, we will
+					#just add all of the pulses to the cluster and flag it for 
+					#degeneracy. 
+					temp_clust = Cluster.Cluster(self.rq_dict["cluster"], self.config)
+					temp_clust.pulses = clust_ps
+					temp_clust.d["degeneracy"] = True
+					self.red_df["clusters"][ev_idx].append(temp_clust)
+					self.red_df["n_clusters"][ev_idx] += 1
+
+		#calculate reduced quantities for the clusters
+		red_ev_idxs = np.where(np.array(self.red_df["n_clusters"]) > 0)[0]
+		print("Calculating reduced quantities of clusters for {:d} events".format(len(red_ev_idxs)))
+		for ev_idx in red_ev_idxs:
+			for c in self.red_df["clusters"][ev_idx]:
+				c.calculate_reduced_quantities()
+			
+
+	#at this stage, clusters and pulses should have been populated
+	#into the reduced df. Now we will calculate the remaining global quantities
+	#that are associated with the event as a whole.
+	def process_globals(self):
+		#process events with clusters
+		red_ev_idxs = np.where(np.array(self.red_df["n_clusters"]) > 0)[0]
+		print("Processing global quantities for {:d} events which have clusters".format(len(red_ev_idxs)))
+		for ev_idx in red_ev_idxs:
+			#total charge is the sum of all positive integrals of pulses
+			#in the event. 
+			total_charge = 0
+			max_q_cluster = None #get cluster with the max Q
+			max_q = 0
+			for c in self.red_df["clusters"][ev_idx]:
+				total_charge += c.d["q"]
+				if(c.d["q"] > max_q):
+					max_q = c.d["q"]
+					max_q_cluster = c
+
+			self.red_df["total_charge"][ev_idx] = total_charge
+
+			#get the position and time of the max q cluster
+			if(max_q_cluster is not None):
+				self.red_df["x"][ev_idx] = max_q_cluster.d["x"]
+				self.red_df["y"][ev_idx] = max_q_cluster.d["y"]
+				self.red_df["t"][ev_idx] = max_q_cluster.d["t_arrival"]
+			else:
+				self.red_df["x"][ev_idx] = None
+				self.red_df["y"][ev_idx] = None
+				self.red_df["t"][ev_idx] = None
+
+
+	#during processing, the Pulse and Cluster objects
+	#are stored in lists within the reduced dictionary. They
+	#also contain waveform data that may be large (but is often ~100 samples). 
+	#This will remove those objects in prep for storage and transfer of the reduced
+	#data into a format that does not rely on the Pulse and Cluster classes. So,
+	#it just extracts their reduced quantity dictionaries. 
+	def dictify_objects(self):
+		#process events with clusters
+		print("Dictifying the Pulse and Cluster objects in prep for data transfer")
+		for ev_idx in range(len(self.red_df["evidx"])):
+			#process pulses
+			pulses = [] #list of dictionaries
+			for p in self.red_df["pulses"][ev_idx]:
+				pulses.append(p.d)
+			self.red_df["pulses"][ev_idx] = pulses
+
+			#process clusters
+			clusters = [] #list of dictionaries
+			for c in self.red_df["clusters"][ev_idx]:
+				pulses = []
+				for p in c.pulses:
+					pulses.append(p.d)
+				c.d["pulses"] = pulses
+				clusters.append(c.d)
+			self.red_df["clusters"][ev_idx] = clusters
+		
+
+
+
+
+
+			

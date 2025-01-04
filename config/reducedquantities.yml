@@ -17,15 +17,15 @@
 
 #embedded as columns of the reduced dataframe, found in DataReduction class
 global:
-  filenum: None #is the number of the file that the event came from
   evidx: None #is an identification of the event number that is consistent with waveform_dfs from the combined pickle files of datasets. 
   timestamp: None #is the timestamp of the event, in unix epoch seconds with microsecond precision 
-  clusters: None #is a list of clusters in the event, each with the datastructure defined below.
+  clusters: [] #is a list of clusters in the event, each with the datastructure defined below.
+  pulses: [] #is a list of all pulses found in the event. 
   n_clusters: None #is the number of clusters in the event, for quick cuts using pd masks
+  n_pulses: None #is the number of pulses in the event, for quick cuts using pd masks
   total_charge: None #is the total charge in the event, in fC, summing all analyzed clusters 
   x: None #is the x position of the event, in mm, determined from the cluster with the highest charge
   y: None #is the y position of the event, in mm, determined from the cluster with the highest charge
-  z: None #is the z position of the event, in mm, determined from the cluster with the highest charge
   t: None #is the average time of arrival relative to the event start, in microseconds, determined from the cluster with the highest charge
 
 #inside the DataReduction class dataframe there will be a number of columns that save
@@ -33,35 +33,52 @@ global:
 #The keys for these columns will have a string appended to the beginning that indicates
 #the channel ID (unique number, not local ASIC channel number) that the information corresponds to.
 channel_rqs:
-  baseline_noise: None #is the noise level of the channel over the samples in baseline, in ENC
-  full_window_noise: None #is the noise of the full event ignoring any regions with pulses or glitches, ENC
+  baseline_std: None #is the noise level of the channel over the samples in baseline, in ENC
+  full_std: None #is the noise of the full event ignoring any regions with pulses or glitches, ENC
   baseline: None #is the baseline of the channel, in ENC 
-  baseline_shift: None #is the shift of the baseline from the zero point, in ENC
+  min: None #is the minimum of the channel, in ENC
+  max: None #is the maximum of the channel, in ENC
 
   
 #embedded as keys or attributes of the Cluster class
 cluster: 
   pulses: [] #a list of pulse elements that are part of the cluster
+  n_pulses: None
+  n_x: None #number of x strips in the cluster
+  n_y: None #number of y strips in the cluster
+
   #the best reconstruction of charge that can be made from the cluster. Using information from induction and collection signals if need be. 
   q: None
-  #channels with a signal above threshold in the cluster 
-  channels: []
-  #the arrival time of the cluster, in microseconds
+  #the arrival time of the cluster, in microseconds, mean of pulse arrivals
   t_arrival: None
+  #the time width of the cluster, in microseconds
+  #should eventually be a more sophisticated quantity
+  #that takes into account the pulse shapes, calculated in the pulse
+  #reduction. But this would aggregate that time width. for now,
+  #it is the std of the arrival times. 
+  dt: None 
   #position variables of the cluster
   x: None
   y: None
-  z: None
   #transverse width of the charge deposition
-  width: None
+  dx: None
+  dy: None
+  #there are cases where we have a complicated
+  #pattern of x and y strips that causes it to be
+  #degenerate, and difficult to associate hits. 
+  degeneracy: None
 
 
 #embedded as keys or attributes of the Pulse class
 pulse: 
-  #best reconstruction of the charge of the pulse in fC, using the gain and ADC conversion
-  q_collection: None
-  #best reconstruction of the "charge" sensed as fit by a model that assumes the shape of induction waveforms, where charge is not collected
-  q_induction: None 
+  #integrate the pulse only positive component above a precise baseline
+  pos_integral: None
+  #integrate the pulse only negative component above a precise baseline
+  neg_integral: None 
+  #combined integral positive and negative
+  integral: None
+  #polarity of the pulse, 1 for positive, -1 for negative
+  polarity: None
   #the maximum of the pulse, in ADC 
   max: None 
   #the minimum (for induction swing) in ADC 
@@ -72,8 +89,10 @@ pulse:
   tmin: None
   #the arrival time of the pulse (as defined in the algorithm) in microseconds
   t_arrival: None
-  #the width of the waveform in microseconds
-  width: None
   #channel of this pulse 
   channel: None
+  #the width of the pulse, in microseconds
+  width: None
+  #asymmetry of the pulse in microseconds
+  asymmetry: None
 
