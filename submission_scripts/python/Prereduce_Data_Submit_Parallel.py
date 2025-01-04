@@ -39,7 +39,7 @@ def submit():
         tagnumber = infile.split('_')[-1].split('.')[0]
         #create a job for this particular file
         this_jobname = jobname + tagnumber
-        cmd_options = '--export=ALL -p pbatch -t 1:00:00 -n 1 -J {} -o {}{}.out'.format(jobname, logfile_path, this_jobname)
+        cmd_options = '--export=ALL -p pbatch -t 1:00:00 -n 1 -J {} -o {}{}.out'.format(this_jobname, logfile_path, this_jobname)
         exe = "python $HOME/cryo-asic-analysis/submission_scripts/python/Prereduce_Data.py '{}' {} {}".format(infile[:-4], output_path, config_path)
         cmd_full = '{} && sbatch {} --wrap=\"{}\"'.format(activate_venv,cmd_options,exe)
 
