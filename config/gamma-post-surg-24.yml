@@ -17,19 +17,21 @@ pt: 2.4 #us
 
 
 #analysis and reduction based quantities
-baseline: [250, 500] #in microseconds relative to the start of the event window
+baseline: [200, 250] #in microseconds relative to the start of the event window
 mv_per_adc: 0.439453 #mV/adc, this should be phased out eventually, as mV is not a totally useful unit 
 #these are microseconds of time where there are expected glithces.
 #These time periods are ignored during pulse finding algorithms. 
-ignore_regions: [[0, 50], [980, 1050]] 
+ignore_regions: [[0, 25], [1000, 1025]] 
 
 #threshold related quantities
 #in multiples of the standard deviation of baseline. 
 #Some sublter algorithms may use different thresholds, some
 #of these are for different coarse stages of pulse analysis. 
 high_threshold: 5 #very robust against noise, finding significant channels
-low_threshold: 3
+low_threshold: 4
 adjacency: 2 #how many adjacent channels (N on each side) to include relative to a channel with a pulse that passes coarse threshold
+peak_detect_smoothing: 1 #us, gaussian smoothing time scale (lowpass) for peak detection only
+
 #in pulse processing, we separate individual pulses
 #which may be in the same event buffer on the same channel. this is the width
 #of the window that we use to isolate a pulse, and analyze it fully

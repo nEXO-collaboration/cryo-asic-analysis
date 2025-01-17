@@ -210,7 +210,7 @@ class DataReduction:
 		red_df["pulses"] = [[] for i in range(len(self.waveform_df.index))]
 		red_df["n_pulses"] = np.zeros(len(self.waveform_df.index))
 		print("Initializing pulses for events with any sample above positive threshold of {:0.2f} sigma".format(self.config["low_threshold"]))
-		#do a np.where to find where any channel number is above threshold
+		#do a np.where to find where any channel has an abs-max above threshold
 		mask = None
 		for chidx in range(len(wavs[0])):
 			ch = chidx_map[chidx]
@@ -219,12 +219,15 @@ class DataReduction:
 			if(ch in self.config["dead_channels"]):
 				continue 
 			maxs = red_df["ch{:d} max".format(ch)]
+			mins = red_df["ch{:d} min".format(ch)]
 			threshs = self.config["low_threshold"]*red_df["ch{:d} baseline_std".format(ch)]
 			if(mask is None):
 				mask = np.where(maxs > threshs, 1, 0)
+				mask = np.where(mins < -1*threshs, 1, 0) | mask
 			#if a mask already exists, I want to OR it with the new mask
 			else:
 				mask = np.where(maxs > threshs, 1, 0) | mask
+				mask = np.where(mins < -1*threshs, 1, 0) | mask
 		
 
 		#get red_ev indices that passed mask
@@ -232,7 +235,7 @@ class DataReduction:
 		for ev_idx in red_ev_idxs:
 			temp_pulse_channels = [] #list of pulse objects that will be edited 
 			#loop through all strip channels and initialize pulse objects
-			#for each channel that has a pulse above a wide acceptance threshold
+			#for each channel that has a pulse above or below a wide acceptance threshold
 			for chidx in range(len(wavs[ev_idx])):
 				ch = chidx_map[chidx]
 				if(not Util.is_channel_strip(self.chmap, ch)):
@@ -242,6 +245,10 @@ class DataReduction:
 				
 				if(red_df["ch{:d} max".format(ch)][ev_idx] > self.config["low_threshold"]*red_df["ch{:d} baseline_std".format(ch)][ev_idx]):
 					temp_pulse_channels.append(ch)
+				elif(red_df["ch{:d} min".format(ch)][ev_idx] < -1*self.config["low_threshold"]*red_df["ch{:d} baseline_std".format(ch)][ev_idx]):
+					temp_pulse_channels.append(ch)
+				else:
+					continue
 
 			#we want to initialize pulse objects
 			#for channels spatially adjacent 
@@ -297,10 +304,9 @@ class DataReduction:
 				#the waveform is in ADC and this thresh is in ENC, put the thresh in ADC
 				thresh = Util.ENC_to_ADC(thresh, self.config["gain"], self.config["pt"])
 				#ignore-region pulses are rejected in the p.find_peaks function. 
-				temp_pulses, properties = p.find_peaks(width=self.config["pt"], thresh=thresh)
+				temp_pulses, properties = p.find_peaks(width=int(self.config["pt"]*self.config["sampling_rate"] + 1), thresh=thresh)
 				if(len(temp_pulses) == 0):
 					continue
-				
 				for j, tp in enumerate(temp_pulses):
 					#reject single-data point glitches due to data corruption
 					if(properties["widths"][j] < 1.0/self.config["sampling_rate"]):
@@ -331,11 +337,7 @@ class DataReduction:
 		self.red_df["clusters"] = [[] for i in range(len(self.red_df["evidx"]))]
 		#and the rest of the reduced quantities for the clusters
 		self.red_df["n_clusters"] = [0]*len(self.red_df["evidx"])
-		self.red_df["total_charge"] = [None]*len(self.red_df["evidx"])
-		self.red_df["x"] = [None]*len(self.red_df["evidx"])
-		self.red_df["y"] = [None]*len(self.red_df["evidx"])
-		self.red_df["z"] = [None]*len(self.red_df["evidx"])
-		self.red_df["t"] = [None]*len(self.red_df["evidx"])
+		
 
 		#only process events with pulses
 		red_ev_idxs = np.where(np.array(self.red_df["n_pulses"]) > 0)[0]
@@ -372,7 +374,7 @@ class DataReduction:
 						for tup in xc:
 							temp_clust.pulses.append(clust_ps[xs_idx[tup[1]]])
 					for yc in y_clust:
-						for i in yc:
+						for tup in yc:
 							temp_clust.pulses.append(clust_ps[ys_idx[tup[1]]])
 
 					self.red_df["clusters"][ev_idx].append(temp_clust)
@@ -403,6 +405,12 @@ class DataReduction:
 	#into the reduced df. Now we will calculate the remaining global quantities
 	#that are associated with the event as a whole.
 	def process_globals(self):
+		self.red_df["total_charge"] = [None]*len(self.red_df["evidx"])
+		self.red_df["x"] = [None]*len(self.red_df["evidx"])
+		self.red_df["y"] = [None]*len(self.red_df["evidx"])
+		self.red_df["z"] = [None]*len(self.red_df["evidx"])
+		self.red_df["t"] = [None]*len(self.red_df["evidx"])
+
 		#process events with clusters
 		red_ev_idxs = np.where(np.array(self.red_df["n_clusters"]) > 0)[0]
 		print("Processing global quantities for {:d} events which have clusters".format(len(red_ev_idxs)))

@@ -6,6 +6,7 @@ import sys
 import os
 import yaml
 from scipy.interpolate import interp1d
+from scipy.ndimage import gaussian_filter
 
 
 class Pulse:
@@ -58,6 +59,12 @@ class Pulse:
 		#done 
 
 
+	def get_gaussian_smoothed_waveform(self):
+		sig_us = self.config["peak_detect_smoothing"]
+		sig_n = int(sig_us*self.config["sampling_rate"])
+		return gaussian_filter(self.wav, sigma=sig_n)
+
+
 	#a simple peak finder that ignores masked regions. 
 	#It finds peaks of both polarities. 
 	def find_peaks(self, width=None, thresh=None):
@@ -72,13 +79,14 @@ class Pulse:
 		thresh = float(thresh) #comes in as ndarray secretly 
 		width = int(width) #comes in as ndarray secretly
 		distance = width*3
-
+		
 		#collective for both polarities
 		all_pulses = []
 		all_properties = {}
 		#POSITIVE POLARITY
-		temp_pulses, properties = find_peaks(self.wav, height=thresh, prominence=thresh, distance=distance, wlen=width)
-
+		wav_smoothed = self.get_gaussian_smoothed_waveform()
+		temp_pulses, properties = find_peaks(wav_smoothed, height=thresh, prominence=thresh, distance=distance, wlen=3*width)
+		
 		#remove any peaks that are in the masked region
 		igs_us = self.config["ignore_regions"]
 		igs_s = [[int(ig[0]*self.config["sampling_rate"]), int(ig[1]*self.config["sampling_rate"])] for ig in igs_us]
@@ -128,8 +136,8 @@ class Pulse:
 		all_pulses = masked_pulses
 
 		#NEGATIVE POLARITY
-		temp_pulses, properties = find_peaks(-1*np.array(self.wav), height=thresh, prominence=thresh, distance=distance, wlen=width)
-
+		temp_pulses, properties = find_peaks(-1*np.array(wav_smoothed), height=thresh, prominence=thresh, distance=distance, wlen=3*width)
+		
 		#remove any peaks that are in the masked region
 		igs_us = self.config["ignore_regions"]
 		igs_s = [[int(ig[0]*self.config["sampling_rate"]), int(ig[1]*self.config["sampling_rate"])] for ig in igs_us]
@@ -176,20 +184,7 @@ class Pulse:
 		for key in masked_properties:
 			all_properties[key] += masked_properties[key]
 		all_pulses += masked_pulses
-
-
-		#for debugging
-		"""
-		if(len(masked_pulses) > 0):
-			tp = masked_pulses[0]
-			fig, ax = plt.subplots()
-			ax.plot(self.wav, 'ko-')
-			ax.axhline(y=thresh, color='r')
-			ax.axhline(y=-1*thresh, color='r')
-			ax.scatter(masked_pulses, self.wav[masked_pulses], s=200)
-			ax.set_xlim([min(masked_pulses) - 50, max(masked_pulses) + 50])
-			plt.show()
-		"""
+		
 		
 		
 		return all_pulses, all_properties
@@ -297,16 +292,19 @@ class Pulse:
 				break
 		#find the threshold crossing on both sides for the width
 		i = np.argmax(wav_pol)
-		j = k = i 
+		#this is a 
+		j = i
+		k = i
 		j_idx_float = k_idx_float = None
 
 		#right side of wave
 		while(wav_pol[j] > thr_w):
 			j += 1
-			if(j == len(wav_pol)):
+			if(j >= len(wav_pol)):
 				break
+			
 
-		if(j == len(wav_pol)):
+		if(j >= len(wav_pol)):
 			#didn't find the CFD crossing
 			j_idx_float = None
 		else:
@@ -325,10 +323,10 @@ class Pulse:
 		#left side of wave
 		while(wav_pol[k] > thr_w):
 			k -= 1
-			if(k == 0):
+			if(k <= 0):
 				break
-		
-		if(k == 0):
+			
+		if(k <= 0):
 			#didn't find the CFD crossing
 			k_idx_float = None
 		else:	
