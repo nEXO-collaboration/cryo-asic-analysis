@@ -343,11 +343,12 @@ class DataReduction:
 		for ev_idx in red_ev_idxs:
 			#cluster time first
 			ts = [p.d["t_arrival"] for p in self.red_df["pulses"][ev_idx]]
-			t_clust, t_clust_idx = Util.simple_1d_clustering(ts, self.config["clust_time_sep"])
+			#returns list of list of tuples, where 0th element is the value and 1st element is index in the original list
+			t_clust = Util.simple_1d_clustering(ts, self.config["clust_time_sep"])
 			#within each time cluster, cluster in x and y (to see if two clusters arrive at the same time)
-			for tcidx, tc in enumerate(t_clust_idx):
+			for tc in t_clust:
 				#pulses in the cluster
-				clust_ps = [self.red_df["pulses"][ev_idx][i] for i in tc]
+				clust_ps = [self.red_df["pulses"][ev_idx][_[1]] for _ in tc]
 				xs = []
 				ys = []
 				xs_idx = []
@@ -360,19 +361,19 @@ class DataReduction:
 						xs.append(Util.get_channel_pos(self.chmap, p.ch)[0])
 						xs_idx.append(i)
 
-				x_clust, x_clust_idx = Util.simple_1d_clustering(xs, self.config["clust_space_sep"])
-				y_clust, y_clust_idx = Util.simple_1d_clustering(ys, self.config["clust_space_sep"])
+				x_clust = Util.simple_1d_clustering(xs, self.config["clust_space_sep"])
+				y_clust = Util.simple_1d_clustering(ys, self.config["clust_space_sep"])
 				#handle the simple case where there is only one cluster in both x and y
 				#or if there is just a single x cluster with no y cluster or vice versa
 				if((len(x_clust) == 1 and len(y_clust) == 1) or (len(x_clust) + len(y_clust) == 1)):
 					#initialize the cluster object
 					temp_clust = Cluster.Cluster(self.rq_dict["cluster"], self.config)
-					for xc in x_clust_idx:
-						for i in xc:
-							temp_clust.pulses.append(clust_ps[xs_idx[i]])
-					for yc in y_clust_idx:
+					for xc in x_clust:
+						for tup in xc:
+							temp_clust.pulses.append(clust_ps[xs_idx[tup[1]]])
+					for yc in y_clust:
 						for i in yc:
-							temp_clust.pulses.append(clust_ps[ys_idx[i]])
+							temp_clust.pulses.append(clust_ps[ys_idx[tup[1]]])
 
 					self.red_df["clusters"][ev_idx].append(temp_clust)
 					self.red_df["n_clusters"][ev_idx] += 1
