@@ -350,11 +350,15 @@ class DataReduction:
 				clust_ps = [self.red_df["pulses"][ev_idx][i] for i in tc]
 				xs = []
 				ys = []
-				for p in clust_ps:
+				xs_idx = []
+				ys_idx = []
+				for i, p in enumerate(clust_ps):
 					if(Util.get_channel_type(self.chmap, p.ch) == 'x'):
 						ys.append(Util.get_channel_pos(self.chmap, p.ch)[1])
+						ys_idx.append(i)
 					else:
 						xs.append(Util.get_channel_pos(self.chmap, p.ch)[0])
+						xs_idx.append(i)
 
 				x_clust, x_clust_idx = Util.simple_1d_clustering(xs, self.config["clust_space_sep"])
 				y_clust, y_clust_idx = Util.simple_1d_clustering(ys, self.config["clust_space_sep"])
@@ -365,10 +369,10 @@ class DataReduction:
 					temp_clust = Cluster.Cluster(self.rq_dict["cluster"], self.config)
 					for xc in x_clust_idx:
 						for i in xc:
-							temp_clust.pulses.append(clust_ps[i])
+							temp_clust.pulses.append(clust_ps[xs_idx[i]])
 					for yc in y_clust_idx:
 						for i in yc:
-							temp_clust.pulses.append(clust_ps[i])
+							temp_clust.pulses.append(clust_ps[ys_idx[i]])
 
 					self.red_df["clusters"][ev_idx].append(temp_clust)
 					self.red_df["n_clusters"][ev_idx] += 1
