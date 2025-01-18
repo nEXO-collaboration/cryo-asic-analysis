@@ -116,8 +116,8 @@ def simple_1d_clustering(data, cluster_spacing):
 	Parameters:
 	- data: list of int or floats
 		The 1D list of values to find clusters
-	- cluster_spacing: int
-		The maximum spacing allowed between consecutive integers in a cluster.
+	- cluster_spacing: float
+		The maximum spacing allowed between consecutive numbers in a cluster.
 
 	Returns:
 	- clusters: list of lists
@@ -125,7 +125,7 @@ def simple_1d_clustering(data, cluster_spacing):
 	- indices: list of lists
 		A list of clusters, where each cluster is a list of the indices of the values in the original data.
 	"""
-	if not data:
+	if(data is None or len(data) == 0):
 		return []  # Handle empty input
 
 	# Sort the data along with their original indices

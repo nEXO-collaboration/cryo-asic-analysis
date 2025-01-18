@@ -304,17 +304,20 @@ class DataReduction:
 				#the waveform is in ADC and this thresh is in ENC, put the thresh in ADC
 				thresh = Util.ENC_to_ADC(thresh, self.config["gain"], self.config["pt"])
 				#ignore-region pulses are rejected in the p.find_peaks function. 
-				temp_pulses, properties = p.find_peaks(width=int(self.config["pt"]*self.config["sampling_rate"] + 1), thresh=thresh)
+				temp_pulses = p.find_peaks(thresh=thresh)
 				if(len(temp_pulses) == 0):
 					continue
 				for j, tp in enumerate(temp_pulses):
-					#reject single-data point glitches due to data corruption
-					if(properties["widths"][j] < 1.0/self.config["sampling_rate"]):
-						continue
 
 					#isolate this pulse from the waveform and store it in a new pulse object. 
 					#this is so that we can analyze the pulse in isolation.
 					window = [tp - int(self.config["pulse_window"]*self.config["sampling_rate"]/2), tp + int(self.config["pulse_window"]*self.config["sampling_rate"]/2)]
+					
+					if(window[0] < 0):
+						window[0] = 0
+					if(window[1] > len(p.wav)):
+						window[1] = len(p.wav) - 1
+
 					newP = Pulse.Pulse(self.rq_dict["pulse"], self.config, p.wav[window[0]:window[1]], ch, idx_start=window[0])
 					peakfound_pulses.append(newP)
 				

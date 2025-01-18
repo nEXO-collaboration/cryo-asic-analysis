@@ -326,11 +326,16 @@ class CryoAsicAnalysis:
 	#for every channel, calculate a PSD using an event-by-event
 	#calculation, averaging over all events. Save these periodogram
 	#data in a dataframe. 
-	def calculate_avg_psds(self):
+	def calculate_avg_psds(self, window=None):
 		self.load_config(self.configfile_or_dict)
 		self.baseline_subtract() #baseline subtract all events
 		chs = self.df.iloc[0]["Channels"]
 		nevents = len(self.df.index) #looping through all events
+
+		if(window is not None):
+			window = [int(window[0]*self.sf), int(window[1]*self.sf)]
+		else:
+			window = [0, self.nsamples]
 
 		for ch in chs:
 			pxx_tot = None
@@ -338,7 +343,7 @@ class CryoAsicAnalysis:
 			avg_event_counter = 0 #number of events over which the avg is calculated
 			for i in range(nevents):
 				wave = self.get_wave(i, ch)
-				wave = [_*self.config["mv_per_adc"]/1000. for _ in wave] #putting ADC units into volts
+				wave = [_*self.config["mv_per_adc"]/1000. for _ in wave[window[0]:window[1]]] #putting ADC units into volts
 				
 				fs, pxx = periodogram(wave, self.sf*1e6)
 

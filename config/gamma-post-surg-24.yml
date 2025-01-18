@@ -28,7 +28,7 @@ ignore_regions: [[0, 25], [1000, 1025]]
 #Some sublter algorithms may use different thresholds, some
 #of these are for different coarse stages of pulse analysis. 
 high_threshold: 5 #very robust against noise, finding significant channels
-low_threshold: 4
+low_threshold: 5
 adjacency: 2 #how many adjacent channels (N on each side) to include relative to a channel with a pulse that passes coarse threshold
 peak_detect_smoothing: 1 #us, gaussian smoothing time scale (lowpass) for peak detection only
 

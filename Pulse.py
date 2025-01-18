@@ -7,6 +7,7 @@ import os
 import yaml
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter
+from sklearn.cluster import DBSCAN
 
 
 class Pulse:
@@ -67,34 +68,35 @@ class Pulse:
 
 	#a simple peak finder that ignores masked regions. 
 	#It finds peaks of both polarities. 
-	def find_peaks(self, width=None, thresh=None):
+	def find_peaks(self, thresh=None):
 		if(thresh == None):
 			#get a quick baseline noise estimate
 			bl_window = [int(self.config["baseline"][0]*self.config["sampling_rate"]), int(self.config["baseline"][1]*self.config["sampling_rate"])]
 			std = np.std(self.wav[bl_window[0]:bl_window[1]])
 			thresh = self.config["high_threshold"]*std
-		if(width == None):
-			width = int(self.config["pt"]*self.config["sampling_rate"]) + 1
 
 		thresh = float(thresh) #comes in as ndarray secretly 
-		width = int(width) #comes in as ndarray secretly
-		distance = width*3
+
 		
 		#collective for both polarities
 		all_pulses = []
-		all_properties = {}
+
 		#POSITIVE POLARITY
-		wav_smoothed = self.get_gaussian_smoothed_waveform()
-		temp_pulses, properties = find_peaks(wav_smoothed, height=thresh, prominence=thresh, distance=distance, wlen=3*width)
+		#get all indices that are above threshold
+		wav_smoothed = np.array(self.get_gaussian_smoothed_waveform())
+		pass_thresh = np.where(wav_smoothed >= thresh)[0]
+		#cluster the indices with a 1 sample separation maximum
+		peak_clusters = Util.simple_1d_clustering(pass_thresh, 1)
+		#remove all clusters with 1 or fewer samples. 
+		peak_clusters = [_ for _ in peak_clusters if len(_) > 1]
+		#for each cluster, get the mean value of the cluster indices. 
+		temp_pulses = [int(np.mean([_[0] for _ in c])) for c in peak_clusters]
+
 		
 		#remove any peaks that are in the masked region
 		igs_us = self.config["ignore_regions"]
 		igs_s = [[int(ig[0]*self.config["sampling_rate"]), int(ig[1]*self.config["sampling_rate"])] for ig in igs_us]
 		masked_pulses = []
-		masked_properties = {}
-		for key in properties:
-			masked_properties[key] = []
-
 		
 		for i, tp in enumerate(temp_pulses):
 			mask = False
@@ -103,50 +105,26 @@ class Pulse:
 					mask = True
 			if(mask == False):
 				masked_pulses.append(tp)
-				for key in properties:
-					masked_properties[key].append(properties[key][i])
-	
-
-		#add a few properties to this dict that are not returned by find_peaks
-		#first, the number of samples above threshold surrounding the peak
-		masked_properties["widths"] = []
-		masked_properties["left_crossing"] = []
-		masked_properties["right_crossing"] = []
-		for i, tp in enumerate(masked_pulses):
-			j = tp
-			k = tp
-			while(self.wav[j] > thresh):
-				j += 1
-				if(j >= len(self.wav)):
-					break
-			j -= 1 #make sure not to count the sample that is below thres
-			while(self.wav[k] > thresh):
-				k -= 1
-				if(k < 0):
-					break
-			k += 1 #make sure not to count the sample that is below thres
-			masked_properties["widths"].append(j - k)
-			masked_properties["left_crossing"].append(k)
-			masked_properties["right_crossing"].append(j)
-
 
 		#update the collection before moving to negative polarity
-		for key in masked_properties:
-			all_properties[key] = masked_properties[key]
 		all_pulses = masked_pulses
 
 		#NEGATIVE POLARITY
-		temp_pulses, properties = find_peaks(-1*np.array(wav_smoothed), height=thresh, prominence=thresh, distance=distance, wlen=3*width)
-		
+		#get all indices that are above threshold
+		wav_smoothed = np.array(self.get_gaussian_smoothed_waveform())
+		pass_thresh = np.where(wav_smoothed <= -1*thresh)[0]
+		#cluster the indices with a 1 sample separation maximum
+		peak_clusters = Util.simple_1d_clustering(pass_thresh, 1)
+		#remove all clusters with 1 or fewer samples. 
+		peak_clusters = [_ for _ in peak_clusters if len(_) > 1]
+		#for each cluster, get the mean value of the cluster indices. 
+		temp_pulses = [int(np.mean([_[0] for _ in c])) for c in peak_clusters]
+
 		#remove any peaks that are in the masked region
 		igs_us = self.config["ignore_regions"]
 		igs_s = [[int(ig[0]*self.config["sampling_rate"]), int(ig[1]*self.config["sampling_rate"])] for ig in igs_us]
 		masked_pulses = []
-		masked_properties = {}
-		for key in properties:
-			masked_properties[key] = []
 
-		
 		for i, tp in enumerate(temp_pulses):
 			mask = False
 			for ig in igs_s:
@@ -154,40 +132,21 @@ class Pulse:
 					mask = True
 			if(mask == False):
 				masked_pulses.append(tp)
-				for key in properties:
-					masked_properties[key].append(properties[key][i])
-	
 
-		#add a few properties to this dict that are not returned by find_peaks
-		#first, the number of samples above threshold surrounding the peak
-		masked_properties["widths"] = []
-		masked_properties["left_crossing"] = []
-		masked_properties["right_crossing"] = []
-		for i, tp in enumerate(masked_pulses):
-			j = tp
-			k = tp
-			while(self.wav[j] < thresh):
-				j += 1
-				if(j >= len(self.wav)):
-					break
-			j -= 1 #make sure not to count the sample that is below thres
-			while(self.wav[k] < thresh):
-				k -= 1
-				if(k < 0):
-					break
-			k += 1 #make sure not to count the sample that is below thres
-			masked_properties["widths"].append(j - k)
-			masked_properties["left_crossing"].append(k)
-			masked_properties["right_crossing"].append(j)
-
-		#update the collection before moving to negative polarity
-		for key in masked_properties:
-			all_properties[key] += masked_properties[key]
 		all_pulses += masked_pulses
 		
+		"""
+		if(len(all_pulses) != 0):
+			fig, ax = plt.subplots()
+			print(thresh)
+			ax.plot(self.wav, 'ko-')
+			ax.scatter(all_pulses, self.wav[all_pulses], s=500)
+			ax.axhline(thresh)
+			ax.set_xlim(np.min(all_pulses)-100, np.max(all_pulses)+100)
+			plt.show()
+		"""
 		
-		
-		return all_pulses, all_properties
+		return all_pulses
 
 		
 
