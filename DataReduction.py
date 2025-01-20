@@ -164,6 +164,7 @@ class DataReduction:
 		wavs = np.array(self.waveform_df["Data"].to_list())
 		chidx_map = np.array(self.waveform_df["Channels"].to_list())[0]
 
+
 		#NOTE: tried to convert all wavs from ADC to ENC here so that all analysis operations
 		#are in ENC units from this point on. It took way way way too long for some reason... 
 		#possibly not the right vectorized syntax or something. This is why you see a bunch of 

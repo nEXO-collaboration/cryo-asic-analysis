@@ -1,5 +1,6 @@
 import math 
 import numpy as np 
+from scipy.signal import iirnotch, filtfilt 
 
 
 #this is a set of importable utilities that is common to many of the classes in this project. 
@@ -177,3 +178,41 @@ def ENC_to_ADC(ENC, Gain=6, pt=1.2):
 
 	ADC = ENC*1.6e-19*(V_Max[Gain][pt])/(1.2/2**12)/(Q_Max[Gain])
 	return ADC
+
+
+#notch filters based on a list of frequency ranges, expects
+#waves to be of shape waves[nevents][nch][nsamples]
+def notch_filter_vectorized(waves, freq_ranges, fs, quality_factor=30):
+    """
+    Apply notch filters to waveforms to remove specified frequency ranges.
+
+    Parameters:
+    - waves: np.ndarray
+        Input array of shape (n_events, n_channels, n_samples) containing waveforms.
+    - freq_ranges: list of [float, float]
+        List of frequency ranges in Hz to notch filter (e.g., [[62500, 70000], [84000, 88000]]).
+    - fs: float
+        Sampling frequency of the waveforms in Hz.
+    - quality_factor: float
+        Quality factor for the notch filter (default: 30). Higher values create narrower notches.
+
+    Returns:
+    - filtered_waves: np.ndarray
+        Filtered array of the same shape as the input `waves`.
+    """
+    filtered_waves = waves.copy()  # Create a copy to store filtered data
+
+    # Process each frequency range
+    for freq_min, freq_max in freq_ranges:
+        # Compute the center frequency and bandwidth of the notch
+        center_freq = (freq_min + freq_max) / 2
+        bandwidth = freq_max - freq_min
+        # Design the notch filter
+        b, a = iirnotch(center_freq / fs * 2, quality_factor)
+
+        # Apply the notch filter to each waveform using filtfilt
+        for event in range(filtered_waves.shape[0]):
+            for channel in range(filtered_waves.shape[1]):
+                filtered_waves[event, channel, :] = filtfilt(b, a, filtered_waves[event, channel, :])
+
+    return filtered_waves

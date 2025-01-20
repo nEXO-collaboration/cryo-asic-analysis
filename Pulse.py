@@ -249,6 +249,7 @@ class Pulse:
 				arrival_idx_float = s_interp(thr_a)
 				self.d["t_arrival"] = (arrival_idx_float + self.idx_start)/self.config["sampling_rate"]
 				break
+			
 		#find the threshold crossing on both sides for the width
 		i = np.argmax(wav_pol)
 		#this is a 
