@@ -80,15 +80,19 @@ pulse:
   integral: None
   #polarity of the pulse, 1 for positive, -1 for negative
   polarity: None
-  #the maximum of the pulse, in ADC 
+  #the maximum of a full 30 microsecond snippet around the pulse, in ENC 
   max: None 
-  #the minimum (for induction swing) in ADC 
+  #the minimum of a full 30 microsecond snippet around the pulse, in ENC
   min: None
+  #amplitude of the pulse, which is reconstructed from a pulse finder, in ENC
+  amp: None
   #the time of the maximum of the waveform, in microseconds
   tmax: None
   #the time of the minimum of the waveform, in microseconds
   tmin: None
-  #the arrival time of the pulse (as defined in the algorithm) in microseconds
+  #time of the amplitude reconstructed location, in microseconds
+  tamp: None
+  #the arrival time of the pulse found by a CFD algorithm, in microseconds
   t_arrival: None
   #channel of this pulse 
   channel: None

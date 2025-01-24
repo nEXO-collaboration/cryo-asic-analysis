@@ -111,7 +111,6 @@ class Pulse:
 
 		#NEGATIVE POLARITY
 		#get all indices that are above threshold
-		wav_smoothed = np.array(self.get_gaussian_smoothed_waveform())
 		pass_thresh = np.where(wav_smoothed <= -1*thresh)[0]
 		#cluster the indices with a 1 sample separation maximum
 		peak_clusters = Util.simple_1d_clustering(pass_thresh, 1)
@@ -181,27 +180,39 @@ class Pulse:
 	#At this stage, usually the pulses are short and isolated, do not overlap
 	#with ignore regions, and are not single data point glitches.
 	def calculate_reduced_quantities(self):
-		#find polarity, max, and min of the pulse
+
 		self.d["max"] = Util.ADC_to_ENC(np.max(self.wav), self.config["gain"], self.config["pt"])
 		self.d["min"] = Util.ADC_to_ENC(np.min(self.wav), self.config["gain"], self.config["pt"])
-		if(abs(self.d["max"]) > abs(self.d["min"])):
-			self.d["polarity"] = 1
-		else:
-			self.d["polarity"] = -1
-		
+		#in absolute time relative to the original full waveform buffer
 		#find the time of the max and min
 		max_idx = np.argmax(self.wav)
 		min_idx = np.argmin(self.wav)
-		#in absolute time relative to the original full waveform buffer
 		self.d["tmax"] = (max_idx + self.idx_start)/self.config["sampling_rate"]
 		self.d["tmin"] = (min_idx + self.idx_start)/self.config["sampling_rate"]
 
-		
-		#integrate around the peak, first find the peak index
-		if(self.d["polarity"] == 1):
-			peak_idx = max_idx
+
+		#At this stage, the pulse that was found by pulse finding algorithm
+		#is centered in the middle of the wave. 
+		center = int(len(self.wav)/2)
+		#we will reconstruct the amplitude of the pulse in this region
+		#by finding the local maximum of a spline interpolation of the waveform
+		#in a small window around the center.
+		window = int((self.config["integ_window"][1] - self.config["integ_window"][0])*self.config["sampling_rate"])
+		spline_ts = range(center - window, center + window)
+		small_spline = interp1d(spline_ts, self.wav[center - window:center + window], kind='cubic')
+		#find the polarity of the spline
+		if(np.abs(np.max(small_spline(spline_ts))) > np.abs(np.min(small_spline(spline_ts)))):
+			self.d["polarity"] = 1
+			self.d["amp"] = Util.ADC_to_ENC(np.max(small_spline(spline_ts)), self.config["gain"], self.config["pt"])
+			peak_idx = np.argmax(small_spline(spline_ts)) + center - window
+			self.d["tamp"] = (np.argmax(small_spline(spline_ts)) + center - window + self.idx_start)/self.config["sampling_rate"]
 		else:
-			peak_idx = min_idx
+			self.d["polarity"] = -1
+			self.d["amp"] = Util.ADC_to_ENC(np.min(small_spline(spline_ts)), self.config["gain"], self.config["pt"])
+			peak_idx = np.argmin(small_spline(spline_ts)) + center - window
+			self.d["tamp"] = (np.argmin(small_spline(spline_ts)) + center - window + self.idx_start)/self.config["sampling_rate"]
+
+		
 		integ_window_us = self.config["integ_window"]
 		integ_window_s = [int(integ_window_us[0] * self.config["sampling_rate"]), int(integ_window_us[1] * self.config["sampling_rate"])]
 		integ_wave = self.wav[peak_idx + integ_window_s[0]:peak_idx + integ_window_s[1]]

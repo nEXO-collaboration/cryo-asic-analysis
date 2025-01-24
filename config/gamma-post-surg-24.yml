@@ -36,7 +36,7 @@ peak_detect_smoothing: 1 #us, gaussian smoothing time scale (lowpass) for peak d
 #which may be in the same event buffer on the same channel. this is the width
 #of the window that we use to isolate a pulse, and analyze it fully
 pulse_window: 30 #microseconds
-integ_window: [-3, 3] #microseconds relative to the peak of the pulse
+integ_window: [-1.75, 1.75] #microseconds relative to the peak of the pulse
 cfd_arrival: 0.5 #fraction of the pulse height where the arrival time of a pulse is calculated
 cfd_width: 0.2 #fraction of the pulse height where the width of the pulse is calculated
 
