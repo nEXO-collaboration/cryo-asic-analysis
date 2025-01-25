@@ -35,6 +35,9 @@ class DataReduction:
 		self.infile = None #current infile path. 
 		self.red_df = {} #A temporary, one-file-only reduced dictionary that is concatenated to the self.reduced_df at the end of the file iteration.
 
+		self.wavs = None #a numpy array of waveforms that gets manipulated, baseline subtracted, etc. 
+		self.chidx_map = None #a numpy array of channel indices that correspond to the waveforms.
+
 		
 
 	def load_config(self, config):
@@ -114,6 +117,8 @@ class DataReduction:
 			print("loading file {}".format(infile))
 			self.waveform_df = pickle.load(open(infile, 'rb'))[0]
 			self.infile = infile
+			self.chidx_map = np.array(self.waveform_df["Channels"].to_list())[0]
+			self.wavs = np.array(self.waveform_df["Data"].to_list())
 			print("Done")
 
 		else:
@@ -150,7 +155,7 @@ class DataReduction:
 
 		return {"min": np.min(masked_waves_min, axis=2), "max": np.max(masked_waves_max, axis=2)}
 
-	def reduce_to_pulses(self):
+	def basic_waveform_properties(self):
 
 		
 		#create a reduced dictionary that has reduced quantities for all events. 
@@ -161,8 +166,7 @@ class DataReduction:
 		#to perform on a numpy array as a vectorized operation. For that,
 		#we unpack this dataframe into a numpy array of shape 
 		#wavs[events][channels][samples].shape = (n_events, n_channels, n_samples)
-		wavs = np.array(self.waveform_df["Data"].to_list())
-		chidx_map = np.array(self.waveform_df["Channels"].to_list())[0]
+		wavs = self.wavs
 
 
 		#NOTE: tried to convert all wavs from ADC to ENC here so that all analysis operations
@@ -175,6 +179,7 @@ class DataReduction:
 		#like the std and means.
 		print("Subtracting baselines")
 		wavs, extracted = self.analyze_and_subtract_baselines(wavs)
+		self.wavs = wavs #save this baseline subtracted version
 
 		#its also convenient here to get the full waveform stds 
 		print("Getting full STDs")
@@ -182,7 +187,7 @@ class DataReduction:
 		#add the extracted info to our red_df
 		for chidx in range(len(wavs[0])):
 			#get the unique, ASIC-number agnostic channel ID
-			ch = chidx_map[chidx]
+			ch = self.chidx_map[chidx]
 			red_df["ch{:d} baseline".format(ch)] = Util.ADC_to_ENC(extracted["baselines"][:, chidx], self.config["gain"], self.config["pt"])
 			red_df["ch{:d} baseline_std".format(ch)] = Util.ADC_to_ENC(extracted["stds"][:, chidx], self.config["gain"], self.config["pt"])
 			red_df["ch{:d} full_std".format(ch)] = Util.ADC_to_ENC(full_stds[:, chidx], self.config["gain"], self.config["pt"])
@@ -196,7 +201,7 @@ class DataReduction:
 		#add the extracted info to our red_df
 		for chidx in range(len(wavs[0])):
 			#get the unique, ASIC-number agnostic channel ID
-			ch = chidx_map[chidx]
+			ch = self.chidx_map[chidx]
 			red_df["ch{:d} min".format(ch)] = Util.ADC_to_ENC(extracted["min"][:, chidx], self.config["gain"], self.config["pt"])
 			red_df["ch{:d} max".format(ch)] = Util.ADC_to_ENC(extracted["max"][:, chidx], self.config["gain"], self.config["pt"])
 
@@ -207,21 +212,28 @@ class DataReduction:
 		red_df["evidx"] = list(range(len(self.waveform_df.index)))
 		red_df["timestamp"] = self.waveform_df["Timestamp"].to_list()
 
+		self.red_df = red_df #store the reduced dictionary for this file.
 
-		red_df["pulses"] = [[] for i in range(len(self.waveform_df.index))]
-		red_df["n_pulses"] = np.zeros(len(self.waveform_df.index))
-		print("Initializing pulses for events with any sample above positive threshold of {:0.2f} sigma".format(self.config["low_threshold"]))
+
+	def identify_major_pulses(self):
+
+		self.red_df["pulses"] = [[] for i in range(len(self.waveform_df.index))]
+		self.red_df["n_pulses"] = np.zeros(len(self.waveform_df.index))
+		wavs = self.wavs
+		
+		
+		print("Finding events with any samples above (or below) {:0.2f} sigma".format(self.config["low_threshold"]))
 		#do a np.where to find where any channel has an abs-max above threshold
 		mask = None
 		for chidx in range(len(wavs[0])):
-			ch = chidx_map[chidx]
+			ch = self.chidx_map[chidx]
 			if(not Util.is_channel_strip(self.chmap, ch)):
 				continue
 			if(ch in self.config["dead_channels"]):
 				continue 
-			maxs = red_df["ch{:d} max".format(ch)]
-			mins = red_df["ch{:d} min".format(ch)]
-			threshs = self.config["low_threshold"]*red_df["ch{:d} baseline_std".format(ch)]
+			maxs = self.red_df["ch{:d} max".format(ch)]
+			mins = self.red_df["ch{:d} min".format(ch)]
+			threshs = self.config["low_threshold"]*self.red_df["ch{:d} baseline_std".format(ch)]
 			if(mask is None):
 				mask = np.where(maxs > threshs, 1, 0)
 				mask = np.where(mins < -1*threshs, 1, 0) | mask
@@ -234,70 +246,27 @@ class DataReduction:
 		#get red_ev indices that passed mask
 		red_ev_idxs = np.where(mask == 1)[0]
 		for ev_idx in red_ev_idxs:
-			temp_pulse_channels = [] #list of pulse objects that will be edited 
+			#create pulse objects for those channels that pass threshold
+			pulses = []
+
 			#loop through all strip channels and initialize pulse objects
 			#for each channel that has a pulse above or below a wide acceptance threshold
 			for chidx in range(len(wavs[ev_idx])):
-				ch = chidx_map[chidx]
+				ch = self.chidx_map[chidx]
 				if(not Util.is_channel_strip(self.chmap, ch)):
 					continue
+
 				if(ch in self.config["dead_channels"]):
 					continue 
 				
-				if(red_df["ch{:d} max".format(ch)][ev_idx] > self.config["low_threshold"]*red_df["ch{:d} baseline_std".format(ch)][ev_idx]):
-					temp_pulse_channels.append(ch)
-				elif(red_df["ch{:d} min".format(ch)][ev_idx] < -1*self.config["low_threshold"]*red_df["ch{:d} baseline_std".format(ch)][ev_idx]):
-					temp_pulse_channels.append(ch)
-				else:
-					continue
+				if(self.red_df["ch{:d} max".format(ch)][ev_idx] > self.config["low_threshold"]*self.red_df["ch{:d} baseline_std".format(ch)][ev_idx] \
+	   					or self.red_df["ch{:d} min".format(ch)][ev_idx] < -1*self.config["low_threshold"]*self.red_df["ch{:d} baseline_std".format(ch)][ev_idx]):
+					pulses.append(Pulse.Pulse(self.rq_dict["pulse"], self.config, wavs[ev_idx][chidx], ch))
 
-			#we want to initialize pulse objects
-			#for channels spatially adjacent 
-			set_adjacent_chs = [] #to avoid double counting
-			for ch in temp_pulse_channels:
-				#initialize the spatially adjacent pulses
-				adj_chs = Util.get_adjacent_channels(self.chmap, ch, self.config["adjacency"])
-				for adj in adj_chs:
-					if(adj in self.config["dead_channels"]):
-						continue
-					set_adjacent_chs.append(adj)
-			
-			#make sets to remove duplicate channels and duplicate pulses
-			adj_chs = list(set(set_adjacent_chs))
-			all_chs = temp_pulse_channels + adj_chs
-			all_chs = list(set(all_chs))
-			for adj in all_chs:
-				chidx = np.where(chidx_map == adj)[0][0]
-				red_df["pulses"][ev_idx].append(Pulse.Pulse(self.rq_dict["pulse"], self.config, wavs[ev_idx][chidx], adj))
-
-			red_df["n_pulses"][ev_idx] = len(red_df["pulses"][ev_idx])
-
-		self.red_df = red_df #store the reduced dictionary for this file.
-		#later will be concatenated manually to the self.reduced_df.
-
-
-	#does waveform level analysis on pulse objects, 
-	#vetting them to either remove if they are meaningless
-	#or calculate reduced quantities like energy and such. 
-	def process_pulses(self):
-		#get events that have non-zero length of pulse objects
-		red_ev_idxs = np.where(np.array(self.red_df["n_pulses"]) > 0)[0]
-		print("Got {:d} events with pulses".format(len(red_ev_idxs)))
-
-		#First, re-buffer pulses into small chunks that
-		#(1) separate multiple pulses from one channel in one event waveform
-		#(2) reject pulses that single data point glitches
-		print("Rejecting single data point glitches and buffering pulses")
-		for ev_idx in red_ev_idxs:
-			pulses = self.red_df["pulses"][ev_idx]
-
-			#first, find any pulses where a peak above threshold can be found,
-			#which may not be many of the channels, as we added pulses that are spatially
-			#adjacent in the previous step. They may not have a peak above threshold, but may
-			#have measurable charge through integration. 
+			#perform a peak finding algorithm that will identify multiple pulses within one waveform,
+			#cut the waveform data into a 60 us snippet, and reject single data point glitches.
 			peakfound_pulses = []
-
-			for i, p in enumerate(pulses):
+			for p in pulses:
 				ch = p.ch
 				#get std of the baseline for this channel
 				std = self.red_df["ch{:d} baseline_std".format(ch)][ev_idx]
@@ -308,8 +277,7 @@ class DataReduction:
 				temp_pulses = p.find_peaks(thresh=thresh)
 				if(len(temp_pulses) == 0):
 					continue
-				for j, tp in enumerate(temp_pulses):
-
+				for tp in temp_pulses:
 					#isolate this pulse from the waveform and store it in a new pulse object. 
 					#this is so that we can analyze the pulse in isolation.
 					window = [tp - int(self.config["pulse_window"]*self.config["sampling_rate"]/2), tp + int(self.config["pulse_window"]*self.config["sampling_rate"]/2)]
@@ -321,85 +289,81 @@ class DataReduction:
 
 					newP = Pulse.Pulse(self.rq_dict["pulse"], self.config, p.wav[window[0]:window[1]], ch, idx_start=window[0])
 					peakfound_pulses.append(newP)
-				
+			
+			#calculate reduced quantities for these pulses
+			for p in peakfound_pulses:
+				p.calculate_reduced_quantities()
+			
 			self.red_df["pulses"][ev_idx] = peakfound_pulses
 			self.red_df["n_pulses"][ev_idx] = len(peakfound_pulses)
-
-		#Calculate all reduced quantities for the pulses
-		red_ev_idxs = np.where(np.array(self.red_df["n_pulses"]) > 0)[0]
-		print("Calculating reduced quantities for pulses from {:d} remaining events".format(len(red_ev_idxs)))
-		for ev_idx in red_ev_idxs:
-			for p in self.red_df["pulses"][ev_idx]:
-				p.calculate_reduced_quantities()
-
-		
-
 
 
 	def process_clusters(self):
 		#initialize an empty list of clusters for each event
-		self.red_df["clusters"] = [[] for i in range(len(self.red_df["evidx"]))]
+		self.red_df["clusters"] = [[] for _ in range(len(self.red_df["evidx"]))]
 		#and the rest of the reduced quantities for the clusters
 		self.red_df["n_clusters"] = [0]*len(self.red_df["evidx"])
 		
 
 		#only process events with pulses
 		red_ev_idxs = np.where(np.array(self.red_df["n_pulses"]) > 0)[0]
-		print("Processing clusters for {:d} events which have pulses".format(len(red_ev_idxs)))
+		print("Initializing clusters based on time-of-arrival for {:d} events which have pulses".format(len(red_ev_idxs)))
 		for ev_idx in red_ev_idxs:
-			#cluster time first
+			#find groups of pulses by time of arrival, in case there are depositions in one long buffer
 			ts = [p.d["t_arrival"] for p in self.red_df["pulses"][ev_idx]]
 			#returns list of list of tuples, where 0th element is the value and 1st element is index in the original list
 			t_clust = Util.simple_1d_clustering(ts, self.config["clust_time_sep"])
-			#within each time cluster, cluster in x and y (to see if two clusters arrive at the same time)
 			for tc in t_clust:
 				#pulses in the cluster
 				clust_ps = [self.red_df["pulses"][ev_idx][_[1]] for _ in tc]
-				xs = []
-				ys = []
-				xs_idx = []
-				ys_idx = []
-				for i, p in enumerate(clust_ps):
-					if(Util.get_channel_type(self.chmap, p.ch) == 'x'):
-						ys.append(Util.get_channel_pos(self.chmap, p.ch)[1])
-						ys_idx.append(i)
-					else:
-						xs.append(Util.get_channel_pos(self.chmap, p.ch)[0])
-						xs_idx.append(i)
 
-				x_clust = Util.simple_1d_clustering(xs, self.config["clust_space_sep"])
-				y_clust = Util.simple_1d_clustering(ys, self.config["clust_space_sep"])
-				#handle the simple case where there is only one cluster in both x and y
-				#or if there is just a single x cluster with no y cluster or vice versa
-				if((len(x_clust) == 1 and len(y_clust) == 1) or (len(x_clust) + len(y_clust) == 1)):
-					#initialize the cluster object
-					temp_clust = Cluster.Cluster(self.rq_dict["cluster"], self.config)
-					for xc in x_clust:
-						for tup in xc:
-							temp_clust.pulses.append(clust_ps[xs_idx[tup[1]]])
-					for yc in y_clust:
-						for tup in yc:
-							temp_clust.pulses.append(clust_ps[ys_idx[tup[1]]])
-
-					self.red_df["clusters"][ev_idx].append(temp_clust)
-					self.red_df["n_clusters"][ev_idx] += 1
+				#we will now add new pulse objects that have channels adjacent
+				#to these pulses, and integrate them around the mean time of arrival. 
+				#This is because quite a bit of energy may be lost due to the threshold
+				#discriminator method in the pulse finding phase. We see this loss clearly
+				#by looking at plotted waveforms. 
+				adjacent_chs = []
+				if(self.config["use_all_channels"] == False):
+					for p in clust_ps:
+						adj_chs = Util.get_adjacent_channels(self.chmap, p.ch, self.config["adjacency"])
+						for adj in adj_chs:
+							if(adj in self.config["dead_channels"]): continue
+							adjacent_chs.append(adj)
 				else:
-					#I don't quite know what to do if we get two events
-					#landing on the tile at the same time. It's a degeneracy
-					#built into the tile geometry. One needs to make assumptions
-					#about charge sharing to be able to associate the x-y
-					#values of the charge depositions. SO, for now, we will
-					#just add all of the pulses to the cluster and flag it for 
-					#degeneracy. 
-					temp_clust = Cluster.Cluster(self.rq_dict["cluster"], self.config)
-					temp_clust.pulses = clust_ps
-					temp_clust.d["degeneracy"] = True
-					self.red_df["clusters"][ev_idx].append(temp_clust)
-					self.red_df["n_clusters"][ev_idx] += 1
+					adjacent_chs = [ch for ch in self.chidx_map if ch not in self.config["dead_channels"] and Util.is_channel_strip(self.chmap, ch)]
+
+				adjacent_chs = list(set(adjacent_chs)) #don't want duplicates
+
+				#create pulse objects that are "snippetted" about the mean time of arrival
+				mean_arrival = np.mean([p.d["t_arrival"] for p in clust_ps])
+				mean_arrival_idx = int(mean_arrival*self.config["sampling_rate"])
+				window = [mean_arrival_idx - int(self.config["pulse_window"]*self.config["sampling_rate"]/2), mean_arrival_idx + int(self.config["pulse_window"]*self.config["sampling_rate"]/2)]
+					
+				if(window[0] < 0):
+					window[0] = 0
+				if(window[1] > len(self.wavs[ev_idx][0])):
+					window[1] = len(self.wavs[ev_idx][0]) - 1
+
+				adjacent_ps = []
+				for ch in adjacent_chs:
+					chidx = np.where(self.chidx_map == ch)[0][0]
+					adjacent_ps.append(Pulse.Pulse(self.rq_dict["pulse"], self.config, self.wavs[ev_idx][chidx][window[0]:window[1]], ch, idx_start=window[0]))
+					#calculate reduced quantities for it
+					adjacent_ps[-1].calculate_reduced_quantities()
+				
+				#add the adjacent pulses to the cluster
+				clust_ps += adjacent_ps
+				
+				#create the cluster object
+				clust = Cluster.Cluster(self.rq_dict["cluster"], self.config)
+				clust.pulses = clust_ps
+				self.red_df["clusters"][ev_idx].append(clust)
+				self.red_df["n_clusters"][ev_idx] += 1
+		
 
 		#calculate reduced quantities for the clusters
 		red_ev_idxs = np.where(np.array(self.red_df["n_clusters"]) > 0)[0]
-		print("Calculating reduced quantities of clusters for {:d} events".format(len(red_ev_idxs)))
+		print("Analyzing charge and spatial distribution of the clusters".format(len(red_ev_idxs)))
 		for ev_idx in red_ev_idxs:
 			for c in self.red_df["clusters"][ev_idx]:
 				c.calculate_reduced_quantities()

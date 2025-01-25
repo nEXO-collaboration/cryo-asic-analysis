@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import Utilities as Util
 import os
 import yaml
+import time
 
 class Cluster:
 	#initialize the cluster with its reduced quantities which
@@ -40,6 +41,43 @@ class Cluster:
 
 
 	def calculate_reduced_quantities(self):
+		self.load_channel_map()
+
+		#form 1D distributions of charge verses distance,
+		#where charge is defined by the regular (not negative or positive)
+		#integral of the channel. Separate X and Y channels. 
+		qxs = []
+		qys = []
+		xs = []
+		ys = []
+		for pulse in self.pulses:
+			if(Util.get_channel_type(self.chmap, pulse.ch) == "y"):
+				qxs.append(pulse.d["integral"])
+				xs.append(Util.get_channel_pos(self.chmap, pulse.ch)[0])
+			else:
+				qys.append(pulse.d["integral"])
+				ys.append(Util.get_channel_pos(self.chmap, pulse.ch)[1])
+
+		#calculate the charge-weighted average of the x and y positions
+		qw_x = None
+		qw_y = None
+		if(len(qxs) > 0):
+			qw_x = np.sum(np.array(xs)*np.array(qxs))/np.sum(qxs)
+		if(len(qys) > 0):
+			qw_y = np.sum(np.array(ys)*np.array(qys))/np.sum(qys)
+		
+
+		if(max(qxs + qys) > 5000):
+			fig, ax = plt.subplots(ncols = 2)
+			ax[0].scatter(xs, qxs, label="X", s=300)
+			ax[1].scatter(ys, qys, label="Y", s=300)
+			if(qw_x != None):
+				ax[0].axvline(x=qw_x, color='r', linestyle='--', label="Charge Weighted X")
+			if(qw_y != None):
+				ax[1].axvline(x=qw_y, color='b', linestyle='--', label="Charge Weighted Y")
+			plt.show()
+
+
 		self.d["n_pulses"] = len(self.pulses)
 		self.d["pulses"] = self.pulses
 
@@ -57,16 +95,6 @@ class Cluster:
 		#window used in the analysis. 
 		t_integration = self.config["integ_window"][1] - self.config["integ_window"][0] #us
 		self.d["q"] = total_charge / t_integration
-
-		#special case where the total charge is 0 so we can't calculate anything else
-		if(self.d["q"] == 0):
-			self.d["x"] = None
-			self.d["y"] = None
-			self.d["dx"] = None
-			self.d["dy"] = None
-			self.d["n_x"] = None
-			self.d["n_y"] = None
-			return
 
 		#the position of the cluster will be charge centroid in 1D. 
 		#for that we need to separate out the pulses into x and y

@@ -236,18 +236,27 @@ class Pulse:
 
 		#calculate the arrival time based on a constant fraction discriminator
 		#method. Also do the same to calculate the width. 
-		f_a = self.config["cfd_arrival"]
-		f_w = self.config["cfd_width"]
+		f_a = self.config["cfd_arrival"] #fraction of the amplitude
+		f_w = self.config["cfd_width"] #fraction of the amplitude
 		wav_pol = np.array(self.wav)*self.d["polarity"]
-		thr_a = f_a*np.max(wav_pol)
-		thr_w = f_w*np.max(wav_pol)
+		thr_a = Util.ENC_to_ADC(np.abs(f_a*self.d["amp"]), self.config["gain"], self.config["pt"])
+		thr_w = Util.ENC_to_ADC(np.abs(f_w*self.d["amp"]), self.config["gain"], self.config["pt"])
 		#there is a bit of complexity at the CFD loop, so that we can
 		#interpolate linearly finer than the sampling rate. that's all this code
 		#about the i - interpolation buffer and such, also avoiding end-of-buffer errors. 
 		interpolation_buffer = 1 #after finding the threshold crossing, we will interpolate a small number of samples
-		#find the threshold crossing for arrival
-		for i, samp in enumerate(wav_pol):
-			if(samp > thr_a):
+
+		#get the index of the amplitude time 
+		start_idx = int(self.d["tamp"]*self.config["sampling_rate"] - self.idx_start)
+		i = start_idx
+		while True:
+			if(i == 0): 
+				self.d["t_arrival"] = self.idx_start/self.config["sampling_rate"] #this will be caught at the end of this function
+				arrival_idx_float = 0
+				break
+
+			samp = wav_pol[i]
+			if(samp <= thr_a):
 				begin = i - interpolation_buffer
 				end = i + interpolation_buffer + 1
 				if(begin < 0):
@@ -260,16 +269,17 @@ class Pulse:
 				arrival_idx_float = s_interp(thr_a)
 				self.d["t_arrival"] = (arrival_idx_float + self.idx_start)/self.config["sampling_rate"]
 				break
-			
+
+			i -= 1
+
 		#find the threshold crossing on both sides for the width
-		i = np.argmax(wav_pol)
-		#this is a 
+		i = start_idx
 		j = i
 		k = i
 		j_idx_float = k_idx_float = None
 
 		#right side of wave
-		while(wav_pol[j] > thr_w):
+		while(wav_pol[j] >= thr_w):
 			j += 1
 			if(j >= len(wav_pol)):
 				break
@@ -292,7 +302,7 @@ class Pulse:
 			j_idx_float = s_interp(thr_w)
 
 		#left side of wave
-		while(wav_pol[k] > thr_w):
+		while(wav_pol[k] >= thr_w):
 			k -= 1
 			if(k <= 0):
 				break
@@ -321,6 +331,14 @@ class Pulse:
 		else:
 			self.d["asymmetry"] = (j_idx_float - arrival_idx_float)/(j_idx_float - k_idx_float)/self.config["sampling_rate"]
 	
+		#there may be a failure mode that really messes up future timing calculations. 
+		#Namely that if the CFD determined arrival time is SO far away from the peak time, 
+		#then we likely have some baseline or noise issue... default it back to the peak time. 
+		#Threshold is relative to the peaking time.
+		if(np.abs(self.d["t_arrival"] - self.d["tamp"]) > 4*float(self.config["pt"])):
+			self.d["t_arrival"] = self.d["tamp"]
+
+
 
 	#for debugging
 	def plot_pulse(self, ax=None, ax2=None, show=False):
