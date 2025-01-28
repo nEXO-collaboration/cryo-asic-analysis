@@ -27,10 +27,11 @@ ignore_regions: [[0, 25], [1000, 1025]]
 #in multiples of the standard deviation of baseline. 
 #Some sublter algorithms may use different thresholds, some
 #of these are for different coarse stages of pulse analysis. 
-high_threshold: 5 #very robust against noise, finding significant channels
+high_threshold: 8 #not used yet. 
 low_threshold: 5
-adjacency: 3 #how many adjacent channels (N on each side) to include relative to a channel with a pulse that passes coarse threshold
-use_all_channels: False #overrides adjacency (which may only select x or y channels) and uses all channels in the event buffer to do position analysis 
+cluster_formation_adjacency: 3 #how many adjacent channels (N on each side) to include relative to the largest pulse when forming a cluster
+use_all_channels: True #overrides adjacency (which may only select x or y channels) and uses all channels in the event buffer to do position analysis 
+max_charge_adjacency: 2 #max number of channels adjacent to the primary charge collection to include when computing charge integral
 peak_detect_smoothing: 1 #us, gaussian smoothing time scale (lowpass) for peak detection only
 
 #in pulse processing, we separate individual pulses

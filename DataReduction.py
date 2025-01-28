@@ -325,7 +325,7 @@ class DataReduction:
 				adjacent_chs = []
 				if(self.config["use_all_channels"] == False):
 					for p in clust_ps:
-						adj_chs = Util.get_adjacent_channels(self.chmap, p.ch, self.config["adjacency"])
+						adj_chs = Util.get_adjacent_channels(self.chmap, p.ch, self.config["cluster_formation_adjacency"])
 						for adj in adj_chs:
 							if(adj in self.config["dead_channels"]): continue
 							adjacent_chs.append(adj)
@@ -333,6 +333,9 @@ class DataReduction:
 					adjacent_chs = [ch for ch in self.chidx_map if ch not in self.config["dead_channels"] and Util.is_channel_strip(self.chmap, ch)]
 
 				adjacent_chs = list(set(adjacent_chs)) #don't want duplicates
+				#remove the channels from this list that are already
+				#pulse-found, i.e. already have pulses in the cluster. 
+				adjacent_chs = [ch for ch in adjacent_chs if ch not in [p.ch for p in clust_ps]]
 
 				#create pulse objects that are "snippetted" about the mean time of arrival
 				mean_arrival = np.mean([p.d["t_arrival"] for p in clust_ps])
@@ -364,9 +367,19 @@ class DataReduction:
 		#calculate reduced quantities for the clusters
 		red_ev_idxs = np.where(np.array(self.red_df["n_clusters"]) > 0)[0]
 		print("Analyzing charge and spatial distribution of the clusters".format(len(red_ev_idxs)))
+		
 		for ev_idx in red_ev_idxs:
+			#In some cases, a cluster reconstruction
+			#may determine that the cluster is not real (has zero charge)
+			#or is actually two clusters spatially separated but at the same time. 
+			#This new list will become the adjusted cluster list. 
+			pass_clusters = [] 
 			for c in self.red_df["clusters"][ev_idx]:
-				c.calculate_reduced_quantities()
+				ret_clust = c.calculate_reduced_quantities()
+				#if the function determined that this shouldnt
+				#be considered a charge deposition, it returns None. 
+				if(ret_clust == None):
+					continue
 			
 
 	#at this stage, clusters and pulses should have been populated
