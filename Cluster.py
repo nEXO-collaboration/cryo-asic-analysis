@@ -149,24 +149,45 @@ class Cluster:
 		elif(len(x_neighbors_pos) == 0):
 			xpos = np.average([_[0] for _ in x_neighbors], weights=[_[1] for _ in x_neighbors])
 		else:
-			#otherwise, do a weighted average of the positives only
-			xpos = np.average([_[0] for _ in x_neighbors_pos], weights=[_[1] for _ in x_neighbors_pos])
-			#sum the positive (collection) integrals
-			summed_collection_integrals += np.sum([_[1] for _ in x_neighbors_pos])
-		
+			#if any of the neighbors are passing the 1-sigma threshold, i.e. 
+			#are "passing" and are positive, use that as the position. 
+			passing_positives_temp = [_ for _ in x_neighbors_pos if _[0] in xxpass]
+			passing_negatives_temp = [_ for _ in x_neighbors if _[0] in xxpass and _[1] < 0]
+			if(len(passing_positives_temp) > 0):
+				xpos = np.average([_[0] for _ in passing_positives_temp], weights=[_[1] for _ in passing_positives_temp])
+				summed_collection_integrals += np.sum([_[1] for _ in passing_positives_temp])
+			elif(len(passing_negatives_temp) > 0):
+				#otherwise, do a weighted average of only the negative 
+				#passing pulses in the neighborhood, and don't add to the collected charge
+				xpos = np.average([_[0] for _ in passing_negatives_temp], weights=[_[1] for _ in passing_negatives_temp])
+			else:
+				#theyre both empty lists. 
+				xpos = None
+				
+
 		if(len(y_neighbors) == 0):
-			#or if the whole list is empty, then we have no y position
+			#or if the whole list is empty, then we have no x position
 			ypos = None
 		elif(len(y_neighbors_pos) == 0):
 			ypos = np.average([_[0] for _ in y_neighbors], weights=[_[1] for _ in y_neighbors])
 		else:
-			ypos = np.average([_[0] for _ in y_neighbors_pos], weights=[_[1] for _ in y_neighbors_pos])
-			#sum the positive (collection) integrals
-			summed_collection_integrals += np.sum([_[1] for _ in y_neighbors_pos])
-
+			#if any of the neighbors are passing the 1-sigma threshold, i.e. 
+			#are "passing" and are positive, use that as the position. 
+			passing_positives_temp = [_ for _ in y_neighbors_pos if _[0] in yypass]
+			passing_negatives_temp = [_ for _ in y_neighbors if _[0] in yypass and _[1] < 0]
+			if(len(passing_positives_temp) > 0):
+				ypos = np.average([_[0] for _ in passing_positives_temp], weights=[_[1] for _ in passing_positives_temp])
+				summed_collection_integrals += np.sum([_[1] for _ in passing_positives_temp])
+			elif(len(passing_negatives_temp) > 0):
+				#otherwise, do a weighted average of only the negative 
+				#passing pulses in the neighborhood, and don't add to the collected charge
+				ypos = np.average([_[0] for _ in passing_negatives_temp], weights=[_[1] for _ in passing_negatives_temp])
+			else:
+				#theyre both empty lists. 
+				ypos = None
 
 		#for debugging
-		if(max(qxs) + max(qys) > 5000):
+		if(max(qxs) + max(qys) < 5000):
 			fig, ax = plt.subplots(ncols = 2)
 			ax[0].scatter(xs, qxs, label="X", s=300)
 			ax[1].scatter(ys, qys, label="Y", s=300)
