@@ -28,6 +28,7 @@ global:
   x: None #is the x position of the event, in mm, determined from the cluster with the highest charge
   y: None #is the y position of the event, in mm, determined from the cluster with the highest charge
   t: None #is the average time of arrival relative to the event start, in microseconds, determined from the cluster with the highest charge
+  multi_site: None #is a float from 0 (single site) to 1 grading this as a multi-site or single site event
 
 #inside the DataReduction class dataframe there will be a number of columns that save
 #ancillary information about the channels, such as their noise level, baseline, and other things. 
@@ -43,10 +44,10 @@ channel_rqs:
   
 #embedded as keys or attributes of the Cluster class
 cluster: 
-  pulses: [] #a list of pulse elements that are part of the cluster
-  n_pulses: None
-  n_x: None #number of x strips in the cluster
-  n_y: None #number of y strips in the cluster
+  charge_pulses: [] #a list of pulse elements used in charge calculation
+  n_pulses: None #Number of pulses used in charge calculation
+
+  position_pulses: [] #a list of pulse elements used in the position calculation
 
   #the best reconstruction of charge that can be made from the cluster. Using information from induction and collection signals if need be. 
   q: None
@@ -61,13 +62,6 @@ cluster:
   #position variables of the cluster
   x: None
   y: None
-  #transverse width of the charge deposition
-  dx: None
-  dy: None
-  #there are cases where we have a complicated
-  #pattern of x and y strips that causes it to be
-  #degenerate, and difficult to associate hits. 
-  degeneracy: None
 
 
 #embedded as keys or attributes of the Pulse class

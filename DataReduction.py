@@ -2,7 +2,6 @@ import yaml
 import os
 import pandas as pd 
 import numpy as np
-from scipy.signal import find_peaks
 import pickle
 import Utilities as Util
 import Pulse
@@ -380,6 +379,11 @@ class DataReduction:
 				#be considered a charge deposition, it returns None. 
 				if(ret_clust == None):
 					continue
+
+				pass_clusters.append(ret_clust)
+			
+			self.red_df["clusters"][ev_idx] = pass_clusters
+			self.red_df["n_clusters"][ev_idx] = len(pass_clusters)
 			
 
 	#at this stage, clusters and pulses should have been populated
@@ -389,16 +393,17 @@ class DataReduction:
 		self.red_df["total_charge"] = [None]*len(self.red_df["evidx"])
 		self.red_df["x"] = [None]*len(self.red_df["evidx"])
 		self.red_df["y"] = [None]*len(self.red_df["evidx"])
-		self.red_df["z"] = [None]*len(self.red_df["evidx"])
 		self.red_df["t"] = [None]*len(self.red_df["evidx"])
+		self.red_df["multi_site"] = [None]*len(self.red_df["evidx"])
 
 		#process events with clusters
 		red_ev_idxs = np.where(np.array(self.red_df["n_clusters"]) > 0)[0]
 		print("Processing global quantities for {:d} events which have clusters".format(len(red_ev_idxs)))
 		for ev_idx in red_ev_idxs:
-			#total charge is the sum of all positive integrals of pulses
-			#in the event. 
-			total_charge = 0
+			if(self.red_df["n_clusters"][ev_idx] > 1):
+				self.red_df["multi_site"][ev_idx] = 1 #can make this much more cool later
+
+			total_charge = 0 #charge from all clusters
 			max_q_cluster = None #get cluster with the max Q
 			max_q = 0
 			for c in self.red_df["clusters"][ev_idx]:
@@ -439,11 +444,17 @@ class DataReduction:
 			#process clusters
 			clusters = [] #list of dictionaries
 			for c in self.red_df["clusters"][ev_idx]:
-				pulses = []
-				for p in c.pulses:
-					pulses.append(p.d)
-				c.d["pulses"] = pulses
+				charge_pulses = []
+				position_pulses = []
+				for p in c.d["charge_pulses"]:
+					charge_pulses.append(p.d)
+				for p in c.d["position_pulses"]:
+					position_pulses.append(p.d)
+
+				c.d["charge_pulses"] = charge_pulses
+				c.d["position_pulses"] = position_pulses
 				clusters.append(c.d)
+
 			self.red_df["clusters"][ev_idx] = clusters
 		
 

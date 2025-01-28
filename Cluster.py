@@ -40,6 +40,40 @@ class Cluster:
 		#done 
 
 
+
+	#This reconstruction is both simple but also verbose...
+	#This is Evan's attempt to illustrate what it presently does:
+	#The assumed input is a set of pulses that correspond in 
+	#proximity with one another, or every channel in both x and y strips. 
+	#The integrals of each channel have already been performed about the
+	#small region in time around a primary pulse that has been detected
+	#by a threshold discriminator. 
+	#1. Distinguish the integrals of x and y strips separately. 
+	#2. Find the mean and standard deviation of the integrals of each strip type.
+	#3. Find the pulses that are outside of 1-sigma of the mean of the integrals
+	#4. Find the mean of the integrals of the pulses that are within 1-sigma of the mean
+	#5. "Baseline" subtract the mean from the integrals of the pulses 
+
+	#At this stage, we have a baseline corrected set of integrals, and we have
+	#identified those channels that lie outside of a 1-sigma range on both positive
+	#and negative side of the mean. 
+
+	#6. Find the maximum positive charge in the cluster. If there is no positive charge
+	#in the cluster, then we should not consider this cluster.
+	#7. Find the absolute max for each strip type. This will return negative values if the
+	#absmax is negative.
+	#8. Find the neighbors of the absmax locations within a certain distance, defined by the
+	#config file.
+	#9. If there are no positive charges in the neighbors, then the cluster position in that
+	#dimension should be the weighted average of the negative pulses in the neighborhood.
+	#10. If there are positive charges in the neighbors, then the cluster position in that
+	#dimension should be the weighted average of the positive pulses in the neighborhood. The
+	#total charge is also determined from this neighborhood and those channels with positive collection. 
+
+
+	#The pulses which ultimately end up contributing to the total charge calculation,
+	#as well as a separate list of those pulses that went into determining to position,
+	#are stored in the reduced quantities for future reference. 
 	def calculate_reduced_quantities(self):
 		self.load_channel_map()
 
@@ -143,11 +177,14 @@ class Cluster:
 		#the cluster position in that dimension should be
 		#the weighted avg of the pulses in that dimension. 
 		summed_collection_integrals = 0 #will be a prototype of the total reconstructed charge
+		charge_channels = [] #[pos, 'x'] list of channels used in charge calculation
+		position_channels = [] #[pos, 'x'] for channels used in the position calculation
 		if(len(x_neighbors) == 0):
 			#or if the whole list is empty, then we have no x position
 			xpos = None
 		elif(len(x_neighbors_pos) == 0):
 			xpos = np.average([_[0] for _ in x_neighbors], weights=[_[1] for _ in x_neighbors])
+			position_channels += [[_[0], 'x'] for _ in x_neighbors]
 		else:
 			#if any of the neighbors are passing the 1-sigma threshold, i.e. 
 			#are "passing" and are positive, use that as the position. 
@@ -156,20 +193,24 @@ class Cluster:
 			if(len(passing_positives_temp) > 0):
 				xpos = np.average([_[0] for _ in passing_positives_temp], weights=[_[1] for _ in passing_positives_temp])
 				summed_collection_integrals += np.sum([_[1] for _ in passing_positives_temp])
+				charge_channels += [[_[0], 'x'] for _ in passing_positives_temp]
+				position_channels += [[_[0], 'x'] for _ in passing_positives_temp]
 			elif(len(passing_negatives_temp) > 0):
 				#otherwise, do a weighted average of only the negative 
 				#passing pulses in the neighborhood, and don't add to the collected charge
 				xpos = np.average([_[0] for _ in passing_negatives_temp], weights=[_[1] for _ in passing_negatives_temp])
+				position_channels += [[_[0], 'x'] for _ in passing_negatives_temp]
 			else:
 				#theyre both empty lists. 
 				xpos = None
-				
+
 
 		if(len(y_neighbors) == 0):
 			#or if the whole list is empty, then we have no x position
 			ypos = None
 		elif(len(y_neighbors_pos) == 0):
 			ypos = np.average([_[0] for _ in y_neighbors], weights=[_[1] for _ in y_neighbors])
+			position_channels += [[_[0], 'y'] for _ in y_neighbors]
 		else:
 			#if any of the neighbors are passing the 1-sigma threshold, i.e. 
 			#are "passing" and are positive, use that as the position. 
@@ -178,16 +219,74 @@ class Cluster:
 			if(len(passing_positives_temp) > 0):
 				ypos = np.average([_[0] for _ in passing_positives_temp], weights=[_[1] for _ in passing_positives_temp])
 				summed_collection_integrals += np.sum([_[1] for _ in passing_positives_temp])
+				charge_channels += [[_[0], 'y'] for _ in passing_positives_temp]
+				position_channels += [[_[0], 'y'] for _ in passing_positives_temp]
+
 			elif(len(passing_negatives_temp) > 0):
 				#otherwise, do a weighted average of only the negative 
 				#passing pulses in the neighborhood, and don't add to the collected charge
 				ypos = np.average([_[0] for _ in passing_negatives_temp], weights=[_[1] for _ in passing_negatives_temp])
+				position_channels += [[_[0], 'y'] for _ in passing_negatives_temp]
 			else:
 				#theyre both empty lists. 
 				ypos = None
 
+
+		#if there is no charge reconstructed, then we should
+		#not sore this cluster any longer
+		if(summed_collection_integrals == 0):
+			return None
+
+		#get a new list of pulse objects that went into the
+		#charge and position calculation 
+		charge_pulses = []
+		position_pulses = []
+		for pulse in self.pulses:
+			typ = Util.get_channel_type(self.chmap, pulse.ch)
+			pos = Util.get_channel_pos(self.chmap, pulse.ch)
+			if([pos, typ] in charge_channels):
+				charge_pulses.append(pulse)
+			if([pos, typ] in position_channels):
+				position_pulses.append(pulse)
+		
+		#store these pulses in reduced quantities
+		self.d["charge_pulses"] = charge_pulses
+		self.d["position_pulses"] = position_pulses
+		self.d["n_pulses"] = len(charge_pulses)
+
+		#the total charge reconstructed needs to be divided
+		#by the integration range, as it is presently in units
+		#of ENC*us.
+		integ_t = np.abs(self.config["integ_window"][1] - self.config["integ_window"][0]) #us
+		self.d["q"] = summed_collection_integrals/integ_t
+
+		#store the position of the cluster
+		self.d["x"] = xpos
+		self.d["y"] = ypos #can be None's if no position is found.
+
+		#For the time of arrival, use the time of the
+		#largest positive charge pulse in the charge_pulses
+		best_t = None
+		max_q = None
+		all_ts = []
+		for pulse in charge_pulses:
+			if(pulse.d["integral"] > 0):
+				all_ts.append(pulse.d["t_arrival"])
+				if(max_q == None or pulse.d["integral"] > max_q):
+					max_q = pulse.d["integral"]
+					best_t = pulse.d["t_arrival"]
+
+		self.d["t_arrival"] = best_t
+		#calculate a spread in the times if there are more than one
+		if(len(all_ts) > 1):
+			self.d["dt"] = np.std(all_ts)
+		else:
+			self.d["dt"] = 0
+
+
 		#for debugging
-		if(max(qxs) + max(qys) < 5000):
+		"""
+		if(self.d["q"] > 1500):
 			fig, ax = plt.subplots(ncols = 2)
 			ax[0].scatter(xs, qxs, label="X", s=300)
 			ax[1].scatter(ys, qys, label="Y", s=300)
@@ -207,61 +306,20 @@ class Cluster:
 			ax[1].set_ylabel("Integral about time of largest pulse [ENC*us]")
 			ax[0].set_title("Total integral sum: {:d}".format(int(summed_collection_integrals)))
 			plt.show()
+		"""
+
+		#this return format, where we return None if 
+		#the cluster should be rejected and self if the
+		#cluster is good, will eventually (hopefully)
+		#evolve to distinguish possible multiple clusters
+		#within this one time frame. There have been instances
+		#where it seems like there may be multiple sites arriving 
+		#at the same time, which is rare and strange to disambiguate. 
+		#For now, we just return the cluster if we ant to keep it. 
+		return self #return the cluster object
 
 
-		self.d["n_pulses"] = len(self.pulses)
-		self.d["pulses"] = self.pulses
 
-		#arrival time is the average of arrival times
-		arrival_times = [p.d["t_arrival"] for p in self.pulses]
-		self.d["t_arrival"] = np.mean(arrival_times)
-		self.d["dt"] = np.std(arrival_times)
-
-		#total charge will presently be the sum of positive integrals
-		#of pulses, represented collection charge. 
-		total_charge = 0
-		for pulse in self.pulses:
-			total_charge += pulse.d["pos_integral"]
-		#this has units of ENC*us, so we divide by the integration
-		#window used in the analysis. 
-		t_integration = self.config["integ_window"][1] - self.config["integ_window"][0] #us
-		self.d["q"] = total_charge / t_integration
-
-		#the position of the cluster will be charge centroid in 1D. 
-		#for that we need to separate out the pulses into x and y
-		x_positions = []
-		y_positions = []
-		x_qs = []
-		y_qs = []
-		self.load_channel_map()
-		for p in self.pulses:
-			if(Util.get_channel_type(self.chmap, p.ch) == "y"):
-				x_positions.append(Util.get_channel_pos(self.chmap, p.ch)[0])
-				x_qs.append(p.d["pos_integral"]/t_integration)
-			else:
-				y_positions.append(Util.get_channel_pos(self.chmap, p.ch)[1])
-				y_qs.append(p.d["pos_integral"]/t_integration)
-
-		self.d["n_x"] = len(x_positions)
-		self.d["n_y"] = len(y_positions)
-		if(np.sum(x_qs) == 0):
-			self.d["x"] = None
-		else:
-			self.d["x"] = np.average(x_positions, weights=x_qs)
-
-		if(np.sum(y_qs) == 0):
-			self.d["y"] = None
-		else:
-			self.d["y"] = np.average(y_positions, weights=y_qs)
-
-		#Eventually, we can find the uncertainty in the x/y or the size of the charge cloud
-		#by using either a lookup table of channel-distributions, or fitting the spatial
-		#distribution of the charge cloud and taking the width, or other methods. See
-		#paper here for more details on how this may be done:
-		#10.1016/j.nima.2020.164702
-		#For now, we'll leave it as nones.
-		self.d["dx"] = None
-		self.d["dy"] = None
 
 
 	def plot_cluster(self):
