@@ -244,6 +244,10 @@ class Cluster:
 		for pulse in self.pulses:
 			typ = Util.get_channel_type(self.chmap, pulse.ch)
 			pos = Util.get_channel_pos(self.chmap, pulse.ch)
+			if(typ == 'x'):
+				pos = pos[1]
+			else:
+				pos = pos[0]
 			if([pos, typ] in charge_channels):
 				charge_pulses.append(pulse)
 			if([pos, typ] in position_channels):
