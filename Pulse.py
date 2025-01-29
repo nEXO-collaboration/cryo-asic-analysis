@@ -1,13 +1,11 @@
 import numpy as np 
 import Utilities as Util
 import matplotlib.pyplot as plt 
-from scipy.signal import find_peaks
 import sys
 import os
 import yaml
 from scipy.interpolate import interp1d
 from scipy.ndimage import gaussian_filter
-from sklearn.cluster import DBSCAN
 
 
 class Pulse:

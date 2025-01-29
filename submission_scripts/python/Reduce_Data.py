@@ -26,8 +26,8 @@ def reduce(input_path, output_path, config_path):
     for i, infile in enumerate(input_files):
         print("Reducing file {}".format(infile))
         dr.load_prereduced_data(infile)
-        dr.reduce_to_pulses() #does basic initial waveform processing and creates Pulse objects
-        dr.process_pulses() #analyzes the pulses in detail to populate pulse reduced quantities
+        dr.basic_waveform_properties() #does basic properties of every channel's waveforms
+        dr.identify_major_pulses() #uses a threshold discriminator to find major pulses and calculates their properties
         dr.process_clusters() #clusters pulses into events and measures properties
         dr.process_globals() #measures global properties of the event from the clusters
         dr.dictify_objects() #deletes Pulse and Cluster objects, turning them into dictionaries in the reduced df
