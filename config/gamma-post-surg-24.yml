@@ -1,7 +1,7 @@
-#chmap: /g/g15/angelico/cryo-asic-analysis/config/channelmap.yml
-#reduced_quantities: /g/g15/angelico/cryo-asic-analysis/config/reducedquantities.yml
-chmap: ../config/channelmap.yml
-reduced_quantities: ../config/reducedquantities.yml
+chmap: /g/g15/angelico/cryo-asic-analysis/config/channelmap.yml
+reduced_quantities: /g/g15/angelico/cryo-asic-analysis/config/reducedquantities.yml
+#chmap: ../config/channelmap.yml
+#reduced_quantities: ../config/reducedquantities.yml
 
 
 #this is an index for the asic number, which will index the tile position for which that asic is attached.
