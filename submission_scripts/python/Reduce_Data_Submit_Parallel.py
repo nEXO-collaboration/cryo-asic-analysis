@@ -4,11 +4,11 @@ import glob
 activate_venv = 'source $HOME/my_personal_env/bin/activate'
 logfile_path = "/p/lustre1/nexouser/data/StanfordData/ChargeModule/LXe_Run1/Gamma_Data_7_16_24/reduced/logfiles/"
 
-jobname = "red-6g24pt-bkg"
+jobname = "red-6g24pt-sig"
 #change path!
-input_path = "/p/lustre1/nexouser/data/StanfordData/ChargeModule/LXe_Run1/Gamma_Data_7_16_24/prereduced/6g24pt_bkg/"
+input_path = "/p/lustre1/nexouser/data/StanfordData/ChargeModule/LXe_Run1/Gamma_Data_7_16_24/prereduced/6g24pt_sig/"
 #change path!
-output_path = "/p/lustre1/nexouser/data/StanfordData/ChargeModule/LXe_Run1/Gamma_Data_7_16_24/reduced/6g24pt_bkg/"
+output_path = "/p/lustre1/nexouser/data/StanfordData/ChargeModule/LXe_Run1/Gamma_Data_7_16_24/reduced/6g24pt_sig/"
 
 config_path = "$HOME/cryo-asic-analysis/config/gamma-post-surg-24.yml"
 
