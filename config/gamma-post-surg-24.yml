@@ -1,7 +1,7 @@
-#chmap: /g/g15/angelico/cryo-asic-analysis/config/channelmap.yml
-#reduced_quantities: /g/g15/angelico/cryo-asic-analysis/config/reducedquantities.yml
-chmap: ../config/channelmap.yml
-reduced_quantities: ../config/reducedquantities.yml
+chmap: /g/g15/angelico/cryo-asic-analysis/config/channelmap.yml
+reduced_quantities: /g/g15/angelico/cryo-asic-analysis/config/reducedquantities.yml
+#chmap: ../config/channelmap.yml
+#reduced_quantities: ../config/reducedquantities.yml
 
 
 #this is an index for the asic number, which will index the tile position for which that asic is attached.
@@ -32,7 +32,7 @@ low_threshold: 5
 cluster_formation_adjacency: 3 #how many adjacent channels (N on each side) to include relative to the largest pulse when forming a cluster
 use_all_channels: True #overrides adjacency (which may only select x or y channels) and uses all channels in the event buffer to do position analysis 
 max_charge_adjacency: 2 #max number of channels adjacent to the primary charge collection to include when computing charge integral
-peak_detect_smoothing: 1 #us, gaussian smoothing time scale (lowpass) for peak detection only
+peak_detect_smoothing: 0 #us, gaussian smoothing time scale (lowpass) for peak detection only
 
 #in pulse processing, we separate individual pulses
 #which may be in the same event buffer on the same channel. this is the width
