@@ -227,7 +227,7 @@ class Pulse:
 		self.d["neg_integral"] = np.trapz(y = integ_wave_n, dx = 1/self.config["sampling_rate"])
 		self.d["neg_integral"] = Util.ADC_to_ENC(self.d["neg_integral"], self.config["gain"], self.config["pt"])
 		#combined
-		self.d["integral"] = self.d["pos_integral"] + self.d["neg_integral"]
+		self.d["integral"] = Util.ADC_to_ENC(np.trapz(y = integ_wave, dx = 1/self.config["sampling_rate"]), self.config["gain"], self.config["pt"])
 		
 		#channel
 		self.d["channel"] = self.ch
