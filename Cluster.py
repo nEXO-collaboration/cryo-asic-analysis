@@ -85,6 +85,12 @@ class Cluster:
 		xs = []
 		ys = []
 		
+		###########PLEASE REMEMBER FOR THIS WHOLE ALGORITHM##############
+		#That the "x" strips have all the same x position but different y positions. 
+		#Do we regret baking this into our entire notion of the tiles? Sort of... it has
+		#led to bugs. Maybe someday we will call "x" strips the ones which have a varying x position. 
+		#Whenever you see a string character "x" or "y", it is referring to the TYPE of strip. Thus
+		#in loop systems where you have a bunch of x positions and qx's, they are "y" strips. 
 		for pulse in self.pulses:
 			if(Util.get_channel_type(self.chmap, pulse.ch) == "y"):
 				qxs.append(pulse.d["integral"])
@@ -126,9 +132,9 @@ class Cluster:
 		#combine into a single data structure
 		qs = []
 		for i in range(len(qxpass)):
-			qs.append([xxpass[i], qxpass[i], "x"])
+			qs.append([xxpass[i], qxpass[i], "y"])
 		for i in range(len(qypass)):
-			qs.append([yypass[i], qypass[i], "y"])
+			qs.append([yypass[i], qypass[i], "x"])
 
 		#if the list of passing pulses is empty, 
 		#then we should not consider this cluster.
@@ -148,7 +154,7 @@ class Cluster:
 		absmax_x = None
 		absmax_y = None
 		for q in qs:
-			if(q[2] == "x"):
+			if(q[2] == "y"):
 				if(absmax_x == None or np.abs(q[1]) > np.abs(absmax_x[1])):
 					absmax_x = q
 			else:
@@ -184,7 +190,7 @@ class Cluster:
 			xpos = None
 		elif(len(x_neighbors_pos) == 0):
 			xpos = np.average([_[0] for _ in x_neighbors], weights=[_[1] for _ in x_neighbors])
-			position_channels += [[_[0], 'x'] for _ in x_neighbors]
+			position_channels += [[_[0], 'y'] for _ in x_neighbors]
 		else:
 			#if any of the neighbors are passing the 1-sigma threshold, i.e. 
 			#are "passing" and are positive, use that as the position. 
@@ -193,13 +199,13 @@ class Cluster:
 			if(len(passing_positives_temp) > 0):
 				xpos = np.average([_[0] for _ in passing_positives_temp], weights=[_[1] for _ in passing_positives_temp])
 				summed_collection_integrals += np.sum([_[1] for _ in passing_positives_temp])
-				charge_channels += [[_[0], 'x'] for _ in passing_positives_temp]
-				position_channels += [[_[0], 'x'] for _ in passing_positives_temp]
+				charge_channels += [[_[0], 'y'] for _ in passing_positives_temp]
+				position_channels += [[_[0], 'y'] for _ in passing_positives_temp]
 			elif(len(passing_negatives_temp) > 0):
 				#otherwise, do a weighted average of only the negative 
 				#passing pulses in the neighborhood, and don't add to the collected charge
 				xpos = np.average([_[0] for _ in passing_negatives_temp], weights=[_[1] for _ in passing_negatives_temp])
-				position_channels += [[_[0], 'x'] for _ in passing_negatives_temp]
+				position_channels += [[_[0], 'y'] for _ in passing_negatives_temp]
 			else:
 				#theyre both empty lists. 
 				xpos = None
@@ -210,7 +216,7 @@ class Cluster:
 			ypos = None
 		elif(len(y_neighbors_pos) == 0):
 			ypos = np.average([_[0] for _ in y_neighbors], weights=[_[1] for _ in y_neighbors])
-			position_channels += [[_[0], 'y'] for _ in y_neighbors]
+			position_channels += [[_[0], 'x'] for _ in y_neighbors]
 		else:
 			#if any of the neighbors are passing the 1-sigma threshold, i.e. 
 			#are "passing" and are positive, use that as the position. 
@@ -219,14 +225,14 @@ class Cluster:
 			if(len(passing_positives_temp) > 0):
 				ypos = np.average([_[0] for _ in passing_positives_temp], weights=[_[1] for _ in passing_positives_temp])
 				summed_collection_integrals += np.sum([_[1] for _ in passing_positives_temp])
-				charge_channels += [[_[0], 'y'] for _ in passing_positives_temp]
-				position_channels += [[_[0], 'y'] for _ in passing_positives_temp]
+				charge_channels += [[_[0], 'x'] for _ in passing_positives_temp]
+				position_channels += [[_[0], 'x'] for _ in passing_positives_temp]
 
 			elif(len(passing_negatives_temp) > 0):
 				#otherwise, do a weighted average of only the negative 
 				#passing pulses in the neighborhood, and don't add to the collected charge
 				ypos = np.average([_[0] for _ in passing_negatives_temp], weights=[_[1] for _ in passing_negatives_temp])
-				position_channels += [[_[0], 'y'] for _ in passing_negatives_temp]
+				position_channels += [[_[0], 'x'] for _ in passing_negatives_temp]
 			else:
 				#theyre both empty lists. 
 				ypos = None
