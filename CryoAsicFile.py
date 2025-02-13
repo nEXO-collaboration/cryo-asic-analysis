@@ -164,11 +164,20 @@ class CryoAsicFile:
 		for c in columns:
 			output_dict[c] = [] #event indexed
 
+            
+		with open(self.config["asic"], 'r') as stream:
+				try:
+					self.asic = yaml.safe_load(stream)
+				except yaml.YAMLError as exc:
+					print(exc)
+		#done 
+        
 		for ev in self.events:
 			channels = []
 			waves = []
 			for ch, wave in enumerate(ev):
-				channels.append(ch + int(self.config["asic"])*64) #here we create unique Channel IDs for each asic in the system. 
+				channels.append(ch + int(self.asic)*64) #here we create unique Channel IDs for each asic in the system. 
+#				channels.append(ch + int(self.config["asic"])*64) #here we create unique Channel IDs for each asic in the system. 
 				waves.append(wave)
 
 			output_dict["Timestamp"].append(None) #trying to figure out where this lives in the raw data at the moment...
